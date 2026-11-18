@@ -359,9 +359,14 @@ func (c *Controller) handleConnectionsAPI(r control.APIRequest) (any, bool, erro
 		}
 		settings.Order = connection.ReconcileOrder(next, settings.Order)
 	case "selection":
-		if err := connection.DecodeStrict(r.Selection, &settings.Selection); err != nil {
+		// Decode into a fresh value: decoding into the stored selection would
+		// keep its id/family when the request omits them, so {"mode":"auto"}
+		// after a connection selection became an invalid auto-with-id.
+		var selection connection.Selection
+		if err := connection.DecodeStrict(r.Selection, &selection); err != nil {
 			return nil, true, err
 		}
+		settings.Selection = selection
 		reselect = true
 	case "connection-order":
 		if err := connection.DecodeStrict(r.Order, &settings.Order); err != nil {
