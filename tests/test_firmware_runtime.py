@@ -50,7 +50,7 @@ class FirmwareRuntime(unittest.TestCase):
         lock = copy.deepcopy(LOCK)
         lock['native'] = {'xray': {'version':'26.3.27'}}
         lock['packages'] = ['flr-runtime', 'flint-xray']
-        manifest = 'kernel - 6.12.94~5a6c1f71be683ae9980b15d3ce73e24d-r1\nflr-runtime - wrong-r1\nflint-xray - 26.3.27-r1\n'
+        manifest = 'kernel - 6.12.112~f0a7348f9cb959e1bf4d0447669b031e-r1\nflr-runtime - wrong-r1\nflint-xray - 26.3.27-r1\n'
         with self.assertRaisesRegex(ValueError, 'runtime'):
             lib.check_manifest(manifest, lock)
 
