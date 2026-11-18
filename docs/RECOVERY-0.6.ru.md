@@ -130,10 +130,11 @@ owner/status, WAN-pin journal и сгенерированные конфиги �
    set -eu
    umask 077
    [ -d /etc/flr-runtime ] && [ ! -L /etc/flr-runtime ]
-   [ "$(stat -c %a /etc/flr-runtime)" = 700 ]
+   mode() { ls -ld "$1" | cut -c1-10; }   # в BusyBox образа нет stat
+   [ "$(mode /etc/flr-runtime)" = drwx------ ]
    if [ -e /etc/flr-runtime/backup ] || [ -L /etc/flr-runtime/backup ]; then
      [ -d /etc/flr-runtime/backup ] && [ ! -L /etc/flr-runtime/backup ]
-     [ "$(stat -c %a /etc/flr-runtime/backup)" = 700 ]
+     [ "$(mode /etc/flr-runtime/backup)" = drwx------ ]
    fi
    cp /etc/sysupgrade.conf /tmp/sysupgrade.conf.before-flr
    cat /tmp/flr-runtime.keep >> /etc/sysupgrade.conf
@@ -143,7 +144,7 @@ owner/status, WAN-pin journal и сгенерированные конфиги �
      case "$path" in ''|'#'*) continue ;; esac
      if [ -e "$path" ] || [ -L "$path" ]; then
        [ -f "$path" ] && [ ! -L "$path" ] || exit 1
-       [ "$(stat -c %a "$path")" = 600 ] || exit 1
+       [ "$(mode "$path")" = -rw------- ] || exit 1
        sha256sum "$path" >> /tmp/flr-state.sha256 || exit 1
      fi
    done < /tmp/flr-runtime.keep
