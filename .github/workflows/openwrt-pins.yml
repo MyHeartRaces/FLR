@@ -1,0 +1,38 @@
+name: OpenWrt release pins
+
+# Manual only. Resolves exact pins for a new OpenWrt release from official
+# release files and containers, after reproducing the pins already in
+# build/versions.lock.json. Output is an artifact for review; nothing is
+# committed and no image is built.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: OpenWrt release to pin (for example 25.12.6)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Resolve and self-check pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: python3 ci/resolve-openwrt-pins.py --version "$REQUESTED_VERSION" --lock build/versions.lock.json --out out/openwrt-pins
+      - name: Save pins
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: openwrt-pins-${{ inputs.version }}-${{ github.run_number }}
+          path: out/openwrt-pins
+          if-no-files-found: warn
+          retention-days: 14

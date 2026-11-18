@@ -1,0 +1,17 @@
+{
+  "version": 3,
+  "rules": [
+    {
+      "domain": [
+        "localhost"
+      ],
+      "domain_suffix": [
+        "lan",
+        "localdomain",
+        "local",
+        "home.arpa",
+        "internal"
+      ]
+    }
+  ]
+}

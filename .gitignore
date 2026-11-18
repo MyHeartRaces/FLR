@@ -1,0 +1,19 @@
+out/
+dl/
+__pycache__/
+*.pyc
+.superpowers/
+.worktrees/
+.ops/
+secrets/
+clients/
+*.pem
+*.key
+*.bin
+*.apk
+*.zip
+*.tar.*
+!build/versions.lock.json
+
+# Files saved from Claude chats (may contain credentials)
+Claude outputs/

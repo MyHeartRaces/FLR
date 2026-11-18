@@ -1,0 +1,15 @@
+#!/bin/sh
+# Payload remains on stdin; never interpolate JSON into a command or filename.
+case "$1" in
+ list)
+  printf '%s\n' '{"read":{"request":""},"write":{"request":""}}'
+  ;;
+ call)
+  case "$2" in
+   read) exec /usr/sbin/flr-controller api --rpc --read-only ;;
+   write) exec /usr/sbin/flr-controller api --rpc ;;
+   *) exit 1 ;;
+  esac
+  ;;
+ *) exit 1 ;;
+esac

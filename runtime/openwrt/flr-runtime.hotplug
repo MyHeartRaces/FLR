@@ -1,0 +1,4 @@
+#!/bin/sh
+# Serialize route refresh through the controller, never recreate transports here.
+[ -S /var/run/flr-runtime/control.sock ] || exit 0
+case "$ACTION" in ifup|ifdown|ifupdate) /usr/sbin/flr-controller refresh >/dev/null 2>&1 ;; esac

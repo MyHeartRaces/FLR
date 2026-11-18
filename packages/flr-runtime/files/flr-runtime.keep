@@ -1,0 +1,42 @@
+# Explicit durable FLR state. No directory recursion or volatile sessions.
+/etc/flr-runtime/settings.json
+/etc/flr-runtime/profiles.json
+/etc/flr-runtime/primary-awg.conf
+/etc/flr-runtime/gecko.json
+/etc/flr-runtime/vless.json
+/etc/flr-runtime/backup/network
+/etc/flr-runtime/backup/firewall
+/etc/flr-runtime/backup/dhcp
+/etc/flr-runtime/boot-guard.nft
+/etc/flr-runtime/rollback.pending
+/etc/flr-runtime/rollback.disabled
+# Unified v2 state and interrupted registry/settings publication.
+/etc/flr-runtime/registry.json
+/etc/flr-runtime/connection-state.json
+/etc/flr-runtime/.connection-old-registry.json
+/etc/flr-runtime/.connection-old-settings.json
+/etc/flr-runtime/.connection-new-registry.json
+/etc/flr-runtime/.connection-new-settings.json
+# Prepared v1-to-v2 migration and its exact private source snapshot.
+/etc/flr-runtime/migration-v2.json
+/etc/flr-runtime/.registry-v2.json
+/etc/flr-runtime/.settings-v2.json
+/etc/flr-runtime/migration-v1/manifest.json
+/etc/flr-runtime/migration-v1/settings.json
+/etc/flr-runtime/migration-v1/profiles.json
+/etc/flr-runtime/migration-v1/primary-awg.conf
+/etc/flr-runtime/migration-v1/gecko.json
+/etc/flr-runtime/migration-v1/vless.json
+# Engine updater: owner config and the compatibility lock (docs/ENGINE-UPDATES.md).
+/etc/flr-runtime/engine-update.json
+/etc/flr-runtime/engines.lock.json
+# Private routing policy overlay (policy/README.md); the image never ships one.
+/etc/flr-runtime/policy/policy.json
+/etc/flr-runtime/policy/rulesets/local-domains.json
+/etc/flr-runtime/policy/rulesets/local-ips.json
+/etc/flr-runtime/policy/rulesets/vpn-required.json
+/etc/flr-runtime/policy/rulesets/direct-essential.json
+/etc/flr-runtime/policy/rulesets/game-platforms.json
+/etc/flr-runtime/policy/rulesets/vpn-services.json
+/etc/flr-runtime/policy/rulesets/roscom-direct-domains.json
+/etc/flr-runtime/policy/rulesets/roscom-direct-ips.json

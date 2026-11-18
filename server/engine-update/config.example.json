@@ -1,0 +1,39 @@
+{
+  "mode": "check",
+  "soak_days": 3,
+  "lock_path": "/var/lib/flr-engine/lock.json",
+  "work_dir": "/var/lib/flr-engine/work",
+  "http_timeout_s": 30,
+  "user_agent": "flr-engine-update/1",
+  "gate": {
+    "modules_root": "/lib/modules",
+    "module_name": "amneziawg",
+    "reboot_required_path": "/var/run/reboot-required"
+  },
+  "engines": {
+    "hysteria": {
+      "repo": "HyNetworks/hysteria",
+      "asset": "hysteria-linux-amd64",
+      "hashes_asset": "hashes.txt",
+      "binary": "/usr/local/bin/hysteria",
+      "unit": "flint-hysteria",
+      "config_path": "/etc/flint-vpn/hysteria/server.yaml",
+      "canary_port": 40443,
+      "canary_timeout_s": 20,
+      "ready_pattern": "server up and running",
+      "stats_url": "http://127.0.0.1:25413",
+      "stats_secret_file": "/etc/flr-engine/stats.secret",
+      "router_user": "router",
+      "verify_window_minutes": 20,
+      "verify_min_bytes": 4096,
+      "verify_inline": true,
+      "promote_when": "idle",
+      "idle_window_s": 120,
+      "idle_max_bytes": 262144,
+      "elf_machine": "x86-64",
+      "restart_wait_s": 4,
+      "verify_consecutive_polls": 3,
+      "ready_retries": 3
+    }
+  }
+}

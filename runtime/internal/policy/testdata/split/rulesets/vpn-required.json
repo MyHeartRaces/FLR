@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "rules": [
+    {
+      "domain": [
+        "mirror.yandex.ru"
+      ],
+      "domain_suffix": [
+        "ubuntu.com",
+        "twitch.tv"
+      ]
+    }
+  ]
+}

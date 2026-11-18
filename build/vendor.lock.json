@@ -1,0 +1,24 @@
+{
+  "repository": "https://github.com/2Grey/awg-openwrt",
+  "commit": "3f3ec68d594c8e965c988af75ac5314616229c88",
+  "original_sha256": {
+    "packages/amneziawg-tools/Makefile": "165fd6e158f9a5e745b22aac11e74b625072d465efcb81e3fd4c33fbdc1c287f",
+    "packages/amneziawg-tools/files/amneziawg.sh": "b4588f8d04bd3bc72778e26abdd24805cdce475847066c296d3101b90243c73e",
+    "packages/amneziawg-tools/files/amneziawg_watchdog": "20b9984404679cccaffccf2d048ab111429274f1611ab5c6b44cc293ff62b354",
+    "packages/kmod-amneziawg/Makefile": "908d5fd4cde028bfe9739c71e993bc01a2531a8e3e03cfb2ecd4b3ca481f8e1e",
+    "packages/luci-proto-amneziawg/Makefile": "85b7ff4eabb107e5e54d9c4a269ee3c8d317064881699e780fc1ebd914226556",
+    "packages/luci-proto-amneziawg/htdocs/luci-static/resources/amneziawg.css": "231402fbe5f5471a54edb594aa78cd996107d55217d4f1c1b6448593cafcf03e",
+    "packages/luci-proto-amneziawg/htdocs/luci-static/resources/icons/amneziawg.svg": "3bf85fee0e4bdfef3a394d01cc172a2a6942695400c501aece521d2787d4fcea",
+    "packages/luci-proto-amneziawg/htdocs/luci-static/resources/protocol/amneziawg.js": "46979d0e39019e5313e1959a0d8aaeab7e36659d5b88cc2b562039be2d3e70fc",
+    "packages/luci-proto-amneziawg/htdocs/luci-static/resources/view/amneziawg/status.js": "a751d451281f09f064fe802f6240f679dfe03e644c5ccbd9e888311a69e098d9",
+    "packages/luci-proto-amneziawg/po/ru/amneziawg.po": "d00641a115f6c7774d406bf4e1a94b70a1e8725fc75bcd8d7a1d726bb6b2d2ec",
+    "packages/luci-proto-amneziawg/po/ru/status.po": "c22e05e73ff3d18463f3f3a6290ee6c936c63f7ed33f0a9febf41f98939b77ba",
+    "packages/luci-proto-amneziawg/root/usr/share/luci/menu.d/luci-proto-amneziawg.json": "8b8c4b93e20a26fb4ff5d58e9090c4ff972813214a077917fa1eba0fdc65ff55",
+    "packages/luci-proto-amneziawg/root/usr/share/rpcd/acl.d/luci-amneziawg.json": "9a16f97686d621817d919003470dba8e9568231202b990259711b0dbb667a6f8",
+    "packages/luci-proto-amneziawg/root/usr/share/rpcd/ucode/luci.amneziawg": "e21c4b98d4c74b0dff577d10eda9f6db41faa39ac186c3da2e4bc449980f28c3"
+  },
+  "local_changes": [
+    "pin official module/tools source commits; kernel module license metadata",
+    "resolve official stable AWG module/tools tags per build; bind selected commits to verified paired UAPI and pinned SDK"
+  ]
+}

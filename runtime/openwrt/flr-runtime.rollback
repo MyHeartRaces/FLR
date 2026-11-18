@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+umask 077
+case "${1:-}" in
+ arm)
+  token="$(/usr/sbin/flr-controller rollback-token arm)"
+  # Neither the watcher nor its eventual expiry command inherits the arm lock.
+  (sleep 180; while ! /usr/sbin/flr-controller rollback-token expire "$token"; do sleep 5; done) </dev/null >/tmp/flr-rollback.log 2>&1 &
+ ;;
+ confirm) /usr/sbin/flr-controller rollback-token "$1" ;;
+ *) echo 'usage: flr-rollback arm|confirm' >&2; exit 2 ;;
+esac

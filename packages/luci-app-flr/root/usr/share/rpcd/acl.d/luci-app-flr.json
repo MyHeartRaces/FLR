@@ -1,0 +1,7 @@
+{
+ "luci-app-flr": {
+  "description": "FLR: status and authenticated configuration",
+  "read": {"ubus": {"luci.flr": ["read"]}},
+  "write": {"ubus": {"luci.flr": ["write"]}}
+ }
+}

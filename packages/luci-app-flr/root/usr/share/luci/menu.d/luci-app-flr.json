@@ -1,0 +1,84 @@
+{
+  "admin/flr": {
+    "title": "FLR",
+    "order": 55,
+    "action": {
+      "type": "firstchild"
+    },
+    "depends": {
+      "acl": [
+        "luci-app-flr"
+      ]
+    }
+  },
+  "admin/flr/overview": {
+    "title": "Обзор",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "flr/overview"
+    }
+  },
+  "admin/flr/proxy": {
+    "title": "Прокси",
+    "order": 20,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/flr/proxy/status": {
+    "title": "Состояние",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "flr/proxy/status"
+    }
+  },
+  "admin/flr/proxy/connections": {
+    "title": "Подключения",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "flr/proxy/connections"
+    }
+  },
+  "admin/flr/proxy/order": {
+    "title": "Порядок",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "flr/proxy/order"
+    }
+  },
+  "admin/flr/proxy/import": {
+    "title": "Импорт",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "flr/proxy/import"
+    }
+  },
+  "admin/flr/settings": {
+    "title": "Настройки",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "flr/settings"
+    }
+  },
+  "admin/flr/help": {
+    "title": "qBittorrent и помощь",
+    "order": 40,
+    "action": {
+      "type": "view",
+      "path": "flr/help"
+    }
+  },
+  "admin/flr/profiles": {
+    "order": 99,
+    "action": {
+      "type": "view",
+      "path": "flr/profiles"
+    }
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "format": "flint2-home-vpn-routing-policy",
+  "version": 3,
+  "status": "synthetic-test-fixture",
+  "default_class": "vpn-general",
+  "note": "Synthetic split policy for tests only; not a routing list."
+}

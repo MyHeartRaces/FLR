@@ -1,0 +1,4 @@
+#!/bin/sh
+/etc/init.d/flr-proxies disable
+/etc/init.d/flr-runtime enable
+exit 0

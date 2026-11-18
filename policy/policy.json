@@ -1,0 +1,7 @@
+{
+  "format": "flint2-home-vpn-routing-policy",
+  "version": 3,
+  "status": "public-image-default",
+  "default_class": "vpn-general",
+  "note": "Public image policy: every destination except local ones goes through the VPN. Routing lists (direct services, games, required-VPN domains) are private and installed per router under /etc/flr-runtime/policy; see policy/README.md."
+}

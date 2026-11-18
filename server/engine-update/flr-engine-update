@@ -1,0 +1,1103 @@
+#!/usr/bin/env python3
+"""flr-engine-update: server-side engine auto-updater with a compatibility lock.
+
+Updates the Hysteria2 server binary to the latest compatible stable release,
+remembers the last known good version, and permanently blocks a version that
+breaks the home router's connection. Also reports (read-only) whether the
+AmneziaWG DKMS module exists for the kernel the server will boot next.
+
+Python 3.11+, standard library only. It never runs apt/dpkg, never reboots and
+never touches the firewall. See README.md for lock semantics and exit codes.
+"""
+from __future__ import annotations
+
+import argparse
+import contextlib
+import copy
+import datetime as dt
+import fcntl
+import hashlib
+import json
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import urllib.request
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
+LOCK_FORMAT = "flr-compat-lock-v1"
+ENGINE = "hysteria"
+DEFAULT_CONFIG_PATH = "/etc/flr-engine/config.json"
+
+EXIT_OK = 0
+EXIT_ERROR = 1        # usage, config, I/O or unexpected error
+EXIT_ROLLBACK = 2     # a version was blocked and/or rolled back during this run
+EXIT_TRANSIENT = 3    # network or verification failure, no state change
+EXIT_UNSAFE = 4       # gate: newest installed kernel has no AWG module
+EXIT_BUSY = 5         # another run holds the lock
+
+MAX_DOWNLOAD = 64 * 1024 * 1024
+MAX_TEXT = 1024 * 1024
+DOWNLOAD_DEADLINE_S = 900
+POLL_INTERVAL_S = 30
+ELF_MACHINES = {"x86-64": 62, "aarch64": 183, "arm": 40, "i386": 3, "riscv": 243}
+MODULE_SUFFIXES = (".ko", ".ko.xz", ".ko.zst", ".ko.gz")
+
+DEFAULT_CONFIG = {
+    "mode": "check",
+    "soak_days": 3,
+    "lock_path": "/var/lib/flr-engine/lock.json",
+    "work_dir": "/var/lib/flr-engine/work",
+    "http_timeout_s": 30,
+    "user_agent": "flr-engine-update/1",
+    "gate": {
+        "modules_root": "/lib/modules",
+        "module_name": "amneziawg",
+        "reboot_required_path": "/var/run/reboot-required",
+    },
+    "engines": {
+        ENGINE: {
+            "repo": "HyNetworks/hysteria",
+            "asset": "hysteria-linux-amd64",
+            "hashes_asset": "hashes.txt",
+            "binary": "/usr/local/bin/hysteria",
+            "unit": "flint-hysteria",
+            "config_path": "/etc/flint-vpn/hysteria/server.yaml",
+            "canary_port": 40443,
+            "canary_timeout_s": 20,
+            "ready_pattern": "server up and running",
+            "stats_url": "",
+            "stats_secret_file": "",
+            "router_user": "",
+            "verify_window_minutes": 20,
+            "verify_min_bytes": 4096,
+            "verify_inline": True,
+            "promote_when": "idle",
+            "idle_window_s": 120,
+            "idle_max_bytes": 262144,
+            "elf_machine": "x86-64",
+            "restart_wait_s": 4,
+            "verify_consecutive_polls": 3,
+            "ready_retries": 3,
+        }
+    },
+}
+
+
+class UpdaterError(Exception):
+    def __init__(self, msg, code=EXIT_ERROR):
+        super().__init__(msg)
+        self.code = code
+
+
+class StatsError(Exception):
+    pass
+
+
+def log(msg):
+    print("flr-engine-update: " + msg, file=sys.stderr, flush=True)
+
+
+# ---------------------------------------------------------------- helpers
+
+def iso(ts):
+    return dt.datetime.fromtimestamp(ts, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_iso(s):
+    return dt.datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc).timestamp()
+
+
+def journal_since(ts):
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(ts))
+
+
+_VER_RE = re.compile(r"^(?:app/)?v?(\d+)\.(\d+)\.(\d+)$")
+
+
+def parse_version(tag):
+    m = _VER_RE.match(tag.strip()) if isinstance(tag, str) else None
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def fmt_version(t):
+    return "v%d.%d.%d" % t
+
+
+def norm_version(s):
+    t = parse_version(s)
+    if t is None:
+        raise UpdaterError("not a version like vX.Y.Z: %r" % (s,))
+    return fmt_version(t)
+
+
+def version_in_output(out, ver):
+    num = ver.lstrip("v")
+    return re.search(r"(?<![\d.])" + re.escape(num) + r"(?!\.?\d)", out or "") is not None
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fsync_dir(d):
+    with contextlib.suppress(OSError):
+        fd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def atomic_write(path, data, mode=0o600):
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=d)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    _fsync_dir(d)
+
+
+def copy_atomic(src, dst, mode=0o755):
+    """Equivalent of `install -m MODE src dst.new && mv -f dst.new dst`."""
+    d = os.path.dirname(dst) or "."
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(dst) + ".new-", dir=d)
+    try:
+        with os.fdopen(fd, "wb") as out, open(src, "rb") as inp:
+            shutil.copyfileobj(inp, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.chmod(tmp, mode)
+        os.replace(tmp, dst)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+    _fsync_dir(d)
+
+
+def deep_merge(base, over):
+    out = copy.deepcopy(base)
+    for k, v in over.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = deep_merge(out[k], v)
+        else:
+            out[k] = copy.deepcopy(v)
+    return out
+
+
+def load_config(path):
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+    except FileNotFoundError:
+        raise UpdaterError("config not found: %s" % path)
+    except (OSError, ValueError) as e:
+        raise UpdaterError("cannot read config %s: %s" % (path, e))
+    cfg = deep_merge(DEFAULT_CONFIG, raw)
+    validate_config(cfg)
+    return cfg
+
+
+def validate_config(cfg):
+    if cfg["mode"] not in ("check", "apply"):
+        raise UpdaterError("config mode must be 'check' or 'apply'")
+    if not isinstance(cfg["soak_days"], (int, float)) or cfg["soak_days"] < 0:
+        raise UpdaterError("soak_days must be >= 0")
+    unknown = set(cfg["engines"]) - {ENGINE}
+    if unknown:
+        raise UpdaterError("unsupported engine(s): %s" % ", ".join(sorted(unknown)))
+    e = cfg["engines"][ENGINE]
+    if e["promote_when"] not in ("idle", "any"):
+        raise UpdaterError("promote_when must be 'idle' or 'any'")
+    if int(e["idle_window_s"]) < 1 or int(e["idle_max_bytes"]) < 0:
+        raise UpdaterError("idle_window_s must be >= 1 and idle_max_bytes >= 0")
+    if not (1 <= int(e["canary_port"]) <= 65535):
+        raise UpdaterError("canary_port out of range")
+    if e["elf_machine"] not in ELF_MACHINES and not isinstance(e["elf_machine"], int):
+        raise UpdaterError("unknown elf_machine %r" % (e["elf_machine"],))
+    if bool(e["stats_url"]) != bool(e["router_user"]) or (e["stats_url"] and not e["stats_secret_file"]):
+        raise UpdaterError("stats_url, stats_secret_file and router_user must be set together")
+    if e["stats_url"] and urlparse(e["stats_url"]).scheme not in ("http", "https"):
+        raise UpdaterError("stats_url must be http(s)")
+    for k in ("repo", "asset", "hashes_asset", "binary", "unit", "config_path", "ready_pattern"):
+        if not e.get(k):
+            raise UpdaterError("engines.hysteria.%s is required" % k)
+    with contextlib.suppress(re.error):
+        re.compile(e["ready_pattern"])
+        return
+    raise UpdaterError("ready_pattern is not a valid regex")
+
+
+# ------------------------------------------------------------------- lock
+
+def new_engine_state():
+    return {"current": None, "last_good": None, "candidate": None,
+            "blocked": [], "hold": False, "evidence": "service-only",
+            "last_attempt": None}
+
+
+class LockStore:
+    def __init__(self, path):
+        self.path = path
+
+    def load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            data = {"format": LOCK_FORMAT, "engines": {}}
+        except (OSError, ValueError) as e:
+            raise UpdaterError("cannot read lock %s: %s" % (self.path, e))
+        if data.get("format") != LOCK_FORMAT:
+            raise UpdaterError("unsupported lock format %r" % (data.get("format"),))
+        engines = data.setdefault("engines", {})
+        st = engines.setdefault(ENGINE, new_engine_state())
+        for k, v in new_engine_state().items():
+            st.setdefault(k, v)
+        return data
+
+    def save(self, data):
+        atomic_write(self.path, (json.dumps(data, indent=2, sort_keys=True) + "\n").encode(), 0o600)
+
+    @contextlib.contextmanager
+    def exclusive(self):
+        d = os.path.dirname(self.path) or "."
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd = os.open(self.path + ".flock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                raise UpdaterError("another flr-engine-update run is in progress", EXIT_BUSY)
+            yield
+        finally:
+            os.close(fd)
+
+
+# ------------------------------------------------------------ network/host
+
+class Net:
+    def __init__(self, timeout=30, user_agent="flr-engine-update/1"):
+        self.timeout = timeout
+        self.user_agent = user_agent
+
+    def _open(self, url, headers=None):
+        if urlparse(url).scheme not in ("http", "https"):
+            raise UpdaterError("refusing non-http(s) URL", EXIT_TRANSIENT)
+        h = {"User-Agent": self.user_agent}
+        h.update(headers or {})
+        return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=self.timeout)
+
+    def get_text(self, url, headers=None):
+        with self._open(url, headers) as r:
+            raw = r.read(MAX_TEXT + 1)
+        if len(raw) > MAX_TEXT:
+            raise UpdaterError("response too large", EXIT_TRANSIENT)
+        return raw.decode("utf-8", "replace")
+
+    def get_json(self, url, headers=None):
+        return json.loads(self.get_text(url, headers))
+
+    def download(self, url, dest, max_bytes=MAX_DOWNLOAD):
+        """Stream to dest; return (sha256_hex, size). Enforces the size bound."""
+        h = hashlib.sha256()
+        size = 0
+        t0 = time.monotonic()
+        with self._open(url) as r:
+            cl = getattr(r, "headers", None) and r.headers.get("Content-Length")
+            if cl and cl.isdigit() and int(cl) > max_bytes:
+                raise UpdaterError("download exceeds %d bytes (Content-Length)" % max_bytes, EXIT_TRANSIENT)
+            with open(dest, "wb") as out:
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    if size > max_bytes:
+                        raise UpdaterError("download exceeds %d bytes" % max_bytes, EXIT_TRANSIENT)
+                    if time.monotonic() - t0 > DOWNLOAD_DEADLINE_S:
+                        raise UpdaterError("download timed out", EXIT_TRANSIENT)
+                    h.update(chunk)
+                    out.write(chunk)
+        return h.hexdigest(), size
+
+
+class Host:
+    """Everything that touches processes, systemd, the clock or the kernel."""
+
+    def now(self):
+        return time.time()
+
+    def sleep(self, s):
+        time.sleep(s)
+
+    def uname_release(self):
+        return os.uname().release
+
+    def _run(self, args, timeout):
+        try:
+            p = subprocess.run(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, timeout=timeout, text=True, errors="replace")
+            return p.returncode, p.stdout
+        except subprocess.TimeoutExpired:
+            return 124, "timeout"
+        except OSError as e:
+            return 127, str(e)
+
+    def systemctl(self, action, unit):
+        return self._run(["systemctl", action, unit], 90)
+
+    def is_active(self, unit):
+        return self._run(["systemctl", "is-active", "--quiet", unit], 20)[0] == 0
+
+    def journal_has(self, unit, since, pattern):
+        rc, out = self._run(["journalctl", "-u", unit, "--since", since, "--no-pager", "-o", "cat", "-q"], 30)
+        return rc == 0 and re.search(pattern, out) is not None
+
+    def run_version(self, path):
+        rc, out = self._run([path, "version"], 15)
+        if rc != 0:
+            raise UpdaterError("'%s version' failed (rc=%d)" % (path, rc), EXIT_TRANSIENT)
+        return out
+
+    def canary(self, binary, config_path, timeout_s, pattern):
+        """Run `binary server -c config_path` as a second process; True once pattern appears."""
+        rx = re.compile(pattern)
+        try:
+            proc = subprocess.Popen([binary, "server", "-c", config_path], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace")
+        except OSError as e:
+            return False, "cannot start canary: %s" % e
+        q = queue.Queue()
+
+        def reader():
+            for line in proc.stdout:
+                q.put(line)
+            q.put(None)
+
+        threading.Thread(target=reader, daemon=True).start()
+        deadline = time.monotonic() + timeout_s
+        tail, ok, detail = [], False, "timeout waiting for ready pattern"
+        try:
+            while time.monotonic() < deadline:
+                try:
+                    line = q.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    detail = "canary exited early (rc=%s)" % proc.poll()
+                    break
+                tail = (tail + [line.strip()[:160]])[-2:]
+                if rx.search(line):
+                    ok, detail = True, "ready"
+                    break
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(5)
+        if not ok and tail:
+            detail += "; last output: " + " | ".join(tail)
+        return ok, detail
+
+
+# ----------------------------------------------------------------- pure bits
+
+def make_canary_config(text, port):
+    """Copy of the production YAML with the top-level `listen:` set to :port.
+
+    Also drops the top-level `trafficStats:` block so the canary does not try
+    to bind the production stats port. Textual on purpose (no YAML parser).
+    """
+    out, found, skipping = [], 0, False
+    for line in text.splitlines(keepends=True):
+        if skipping:
+            if line.strip() == "" or line[0] in " \t#-":
+                continue
+            skipping = False
+        if re.match(r"^trafficStats\s*:", line):
+            skipping = True
+            continue
+        if re.match(r"""^listen\s*:\s*(["']?)[^\s#"']*\1\s*(#.*)?$""", line.rstrip("\r\n")):
+            found += 1
+            out.append("listen: :%d\n" % port)
+            continue
+        out.append(line)
+    if found != 1:
+        raise UpdaterError("canary config: expected exactly one top-level 'listen:' key, found %d" % found)
+    result = "".join(out)
+    if len(re.findall(r"(?m)^listen: :%d$" % port, result)) != 1:
+        raise UpdaterError("canary config validation failed")
+    return result
+
+
+def check_elf(path, machine):
+    want = machine if isinstance(machine, int) else ELF_MACHINES[machine]
+    with open(path, "rb") as f:
+        head = f.read(20)
+    if len(head) < 20 or head[:4] != b"\x7fELF":
+        raise UpdaterError("downloaded file is not an ELF binary", EXIT_TRANSIENT)
+    fmt = "little" if head[5] == 1 else "big"
+    got = int.from_bytes(head[18:20], fmt)
+    if got != want:
+        raise UpdaterError("ELF e_machine %d does not match expected %d" % (got, want), EXIT_TRANSIENT)
+
+
+def parse_hashes(text, name):
+    for line in text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+            if os.path.basename(parts[1].lstrip("*")) == name:
+                return parts[0].lower()
+    return None
+
+
+@dataclass
+class Release:
+    tag: str
+    version: tuple
+    published: float
+    assets: dict = field(default_factory=dict)
+
+
+def parse_releases(data):
+    out = []
+    for r in data if isinstance(data, list) else []:
+        if r.get("draft") or r.get("prerelease"):
+            continue
+        v = parse_version(r.get("tag_name", ""))
+        if v is None or not r.get("published_at"):
+            continue
+        try:
+            pub = parse_iso(r["published_at"])
+        except ValueError:
+            continue
+        assets = {a["name"]: {"url": a.get("browser_download_url", ""), "digest": a.get("digest")}
+                  for a in r.get("assets", []) if a.get("name")}
+        out.append(Release(r["tag_name"], v, pub, assets))
+    return sorted(out, key=lambda x: x.version, reverse=True)
+
+
+def select_candidate(releases, st, soak_days, now):
+    if st.get("hold") or not st.get("current"):
+        return None
+    cur = parse_version(st["current"]["version"])
+    blocked = {b["version"] for b in st["blocked"]}
+    for r in sorted(releases, key=lambda x: x.version, reverse=True):
+        if r.version <= cur or fmt_version(r.version) in blocked:
+            continue
+        if now - r.published < soak_days * 86400:
+            continue
+        return r
+    return None
+
+
+def kernel_gate(g, running=None):
+    root, mod = g["modules_root"], g["module_name"]
+    names = []
+    if os.path.isdir(root):
+        for n in os.listdir(root):
+            p = os.path.join(root, n)
+            if (re.match(r"\d", n) and os.path.isdir(p)
+                    and (os.path.isfile(os.path.join(p, "modules.dep")) or os.path.isdir(os.path.join(p, "kernel")))):
+                names.append(n)
+    names.sort(key=lambda n: tuple(int(x) for x in re.findall(r"\d+", n)))
+    kernels = []
+    for n in names:
+        found = None
+        for sub in ("updates/dkms", "extra"):
+            for dp, _dn, fn in os.walk(os.path.join(root, n, sub)):
+                for f in fn:
+                    if any(f == mod + s for s in MODULE_SUFFIXES):
+                        found = os.path.join(dp, f)
+        kernels.append({"version": n, "amneziawg": found is not None, "module_path": found,
+                        "running": n == running})
+    newest = kernels[-1] if kernels else None
+    safe = bool(newest and newest["amneziawg"])
+    rep = {"modules_root": root, "module": mod, "running": running, "kernels": kernels,
+           "newest": newest["version"] if newest else None,
+           "reboot_required": os.path.exists(g["reboot_required_path"]),
+           "safe_to_reboot": safe}
+    if not safe:
+        k = newest["version"] if newest else "<none>"
+        rep["suggestion"] = ("NOT EXECUTED by this tool; the owner may run, after review: "
+                             "'dkms autoinstall -k %s' to build the module, or "
+                             "'apt-mark hold linux-image-%s' to stop it becoming the boot kernel" % (k, k))
+    return rep
+
+
+# ------------------------------------------------------------------ updater
+
+class Updater:
+    def __init__(self, cfg, host=None, net=None, dry=False):
+        self.dry = dry
+        self.cfg = cfg
+        self.e = cfg["engines"][ENGINE]
+        self.host = host or Host()
+        self.net = net or Net(cfg["http_timeout_s"], cfg["user_agent"])
+        self.store = LockStore(cfg["lock_path"])
+        self.data = self.store.load()
+
+    # -- state
+    @property
+    def st(self):
+        return self.data["engines"][ENGINE]
+
+    def save(self):
+        if self.dry:
+            raise UpdaterError("internal error: write attempted in read-only mode")
+        self.store.save(self.data)
+
+    def stats_configured(self):
+        return bool(self.e["stats_url"])
+
+    def _block(self, version, sha, reason):
+        self.st["blocked"] = [b for b in self.st["blocked"] if b["version"] != version]
+        self.st["blocked"].append({"version": version, "sha256": sha, "reason": reason,
+                                   "at": iso(self.host.now())})
+
+    def _lg_path(self, version):
+        return "%s.last-good-%s" % (self.e["binary"], version)
+
+    def _prune_last_good(self):
+        keep = {self._lg_path(x["version"]) for x in (self.st["current"], self.st["last_good"]) if x}
+        b = self.e["binary"]
+        d, base = os.path.dirname(b), os.path.basename(b)
+        for n in os.listdir(d):
+            p = os.path.join(d, n)
+            if n.startswith(base + ".last-good-") and p not in keep:
+                with contextlib.suppress(OSError):
+                    os.unlink(p)
+
+    def _staged_path(self, version):
+        return os.path.join(self.cfg["work_dir"], "staged", "%s-%s" % (ENGINE, version))
+
+    # -- stats API
+    def _stats(self, path):
+        e = self.e
+        try:
+            with open(e["stats_secret_file"], "r", encoding="utf-8") as f:
+                secret = f.read().strip()
+            return self.net.get_json(e["stats_url"].rstrip("/") + path, {"Authorization": secret})
+        except StatsError:
+            raise
+        except Exception as ex:  # never include the secret in messages
+            raise StatsError("stats API %s unavailable: %s" % (path, type(ex).__name__))
+
+    def _online(self):
+        """None when stats are not configured, else the router user's online count."""
+        if not self.stats_configured():
+            return None
+        data = self._stats("/online")
+        return int(data.get(self.e["router_user"], 0))
+
+    def _idle_check(self):
+        """Decide whether the router user is idle. Never returns None.
+
+        Idle means: router_user online >= 1 AND tx+rx growth over idle_window_s
+        <= idle_max_bytes (a probe-only warm reserve). Offline => defer.
+        Raises StatsError when the stats API is unreachable.
+        """
+        e = self.e
+        chk = {"online": None, "window_s": int(e["idle_window_s"]), "max_bytes": int(e["idle_max_bytes"]),
+               "measured_bytes": None, "at": iso(self.host.now())}
+        if not self.stats_configured():
+            chk.update(decision="unconfigured",
+                       reason="promote_when=idle needs the stats API; set stats_url or promote_when=any")
+            return chk
+        chk["online"] = self._online()
+        if chk["online"] < 1:
+            chk.update(decision="offline", reason="router not online; deferring")
+            return chk
+        tx1, rx1 = self._counters()
+        self.host.sleep(int(e["idle_window_s"]))
+        tx2, rx2 = self._counters()
+        grew = lambda a, b: b - a if b >= a else b     # counter reset => restart
+        chk["measured_bytes"] = grew(tx1, tx2) + grew(rx1, rx2)
+        chk["decision"] = "idle" if chk["measured_bytes"] <= chk["max_bytes"] else "busy"
+        return chk
+    def _counters(self):
+        d = self._stats("/traffic").get(self.e["router_user"], {})
+        return int(d.get("tx", 0)), int(d.get("rx", 0))
+
+    # -- bootstrap
+    def _bootstrap_current(self):
+        st, binp = self.st, self.e["binary"]
+        if not os.path.isfile(binp):
+            raise UpdaterError("binary not found: %s" % binp)
+        sha = sha256_file(binp)
+        cur = st["current"]
+        if cur and cur["sha256"] == sha:
+            return
+        if cur and st["candidate"] and st["candidate"]["stage"] in ("installing", "verifying"):
+            return
+        out = self.host.run_version(binp)
+        m = re.search(r"\bv(\d+\.\d+\.\d+)", out) or re.search(r"(\d+\.\d+\.\d+)", out)
+        if not m:
+            raise UpdaterError("cannot determine installed version from '%s version'" % binp)
+        if cur:
+            log("installed binary differs from lock; re-reading version")
+        st["current"] = {"version": "v" + m.group(1), "sha256": sha, "installed_at": iso(self.host.now())}
+        if st["last_good"] is None:
+            st["last_good"] = dict(st["current"])
+            copy_atomic(binp, self._lg_path(st["current"]["version"]))
+        self.save()
+
+    def _recover_interrupted(self):
+        st = self.st
+        lg = st["last_good"]
+        log("recovering from an interrupted promotion")
+        if lg and os.path.isfile(self._lg_path(lg["version"])):
+            self._restore(lg)
+            st["current"] = dict(lg)
+        st["candidate"] = None
+        self.save()
+
+    # -- restore / rollback
+    def _restore(self, good):
+        """Copy the last-good binary back and restart. Returns health; raises before copying."""
+        src = self._lg_path(good["version"])
+        if not os.path.isfile(src):
+            raise UpdaterError("last-good copy missing: %s" % src)
+        if sha256_file(src) != good["sha256"]:
+            raise UpdaterError("last-good copy checksum mismatch: %s" % src)
+        since = journal_since(self.host.now())
+        copy_atomic(src, self.e["binary"])
+        self.host.systemctl("restart", self.e["unit"])
+        ok, why = self._wait_ready(since)
+        if not ok:
+            log("WARNING: restored %s but service not healthy: %s" % (good["version"], why))
+        return ok
+    def _do_rollback(self, bad, reason, rep, inconclusive=False):
+        """Restore last_good. Blocks `bad` only when the failure is the candidate's own.
+
+        Returns "rolled-back" (blocked), "inconclusive" (not blocked) or
+        "environment-failure" (last_good also failed; not blocked).
+        """
+        st = self.st
+        good = st["last_good"]
+        copied = healthy = False
+        try:
+            healthy = self._restore(good)
+            copied = True
+        except UpdaterError as ex:
+            log("rollback failed: %s" % ex)
+        rep["rollback_ok"] = healthy
+        if inconclusive:
+            outcome = "inconclusive"
+        elif not healthy:
+            outcome = "environment-failure"
+            reason = "environment failure: last-good %s also failed (%s)" % (good["version"], reason)
+        else:
+            outcome = "rolled-back"
+            self._block(bad["version"], bad["sha256"], reason)
+            rep["blocked"] = {"version": bad["version"], "reason": reason}
+        if outcome != "rolled-back":
+            rep["not_blocked"] = {"version": bad["version"], "reason": reason}
+        st["last_attempt"] = {"version": bad["version"], "result": outcome, "reason": reason,
+                              "at": iso(self.host.now())}
+        if copied:
+            st["current"] = dict(good)
+        st["candidate"] = None
+        self.save()
+        log("%s: %s -> %s (%s)" % (outcome, bad["version"], good["version"], reason))
+        return outcome
+    def _wait_ready(self, since):
+        e, h = self.e, self.host
+        h.sleep(e["restart_wait_s"])
+        active = ready = False
+        for i in range(int(e["ready_retries"]) + 1):
+            active = h.is_active(e["unit"])
+            ready = active and h.journal_has(e["unit"], since, e["ready_pattern"])
+            if ready:
+                return True, ""
+            if i < int(e["ready_retries"]):
+                h.sleep(2)
+        return False, ("service not active" if not active else "ready line not seen in journal")
+
+    # -- fetch + verify
+    def _fetch_releases(self):
+        url = "https://api.github.com/repos/%s/releases?per_page=30" % self.e["repo"]
+        try:
+            return parse_releases(self.net.get_json(url, {"Accept": "application/vnd.github+json"}))
+        except UpdaterError:
+            raise
+        except Exception as ex:
+            raise UpdaterError("cannot fetch release list: %s" % type(ex).__name__, EXIT_TRANSIENT)
+
+    def _fetch_and_verify(self, rel):
+        e, version = self.e, fmt_version(rel.version)
+        a = rel.assets.get(e["asset"])
+        h = rel.assets.get(e["hashes_asset"])
+        if not a or not h:
+            raise UpdaterError("release %s lacks %s or %s" % (version, e["asset"], e["hashes_asset"]), EXIT_TRANSIENT)
+        for x in (a, h):
+            if urlparse(x["url"]).scheme != "https":
+                raise UpdaterError("asset URL is not https", EXIT_TRANSIENT)
+        try:
+            want = parse_hashes(self.net.get_text(h["url"]), e["asset"])
+            if not want:
+                raise UpdaterError("no sha256 for %s in %s" % (e["asset"], e["hashes_asset"]), EXIT_TRANSIENT)
+            tmpd = os.path.join(self.cfg["work_dir"], "dl")
+            shutil.rmtree(tmpd, ignore_errors=True)
+            os.makedirs(tmpd, mode=0o700)
+            part = os.path.join(tmpd, e["asset"])
+            got, _size = self.net.download(a["url"], part, MAX_DOWNLOAD)
+        except UpdaterError:
+            raise
+        except Exception as ex:
+            raise UpdaterError("download failed: %s" % type(ex).__name__, EXIT_TRANSIENT)
+        if got != want:
+            raise UpdaterError("sha256 mismatch against %s for %s" % (e["hashes_asset"], version), EXIT_TRANSIENT)
+        dg = a.get("digest")
+        if dg and dg.lower() != "sha256:" + got:
+            raise UpdaterError("sha256 mismatch against API digest for %s" % version, EXIT_TRANSIENT)
+        check_elf(part, e["elf_machine"])
+        os.chmod(part, 0o755)
+        if not version_in_output(self.host.run_version(part), version):
+            raise UpdaterError("'version' output does not report %s" % version, EXIT_TRANSIENT)
+        final = self._staged_path(version)
+        os.makedirs(os.path.dirname(final), mode=0o700, exist_ok=True)
+        os.replace(part, final)
+        shutil.rmtree(tmpd, ignore_errors=True)
+        return final, got
+
+    def _canary(self, path):
+        e = self.e
+        with open(e["config_path"], "r", encoding="utf-8") as f:
+            text = make_canary_config(f.read(), int(e["canary_port"]))
+        d = os.path.join(self.cfg["work_dir"], "canary")
+        shutil.rmtree(d, ignore_errors=True)
+        os.makedirs(d, mode=0o700)
+        try:
+            cfgp = os.path.join(d, "server.yaml")
+            atomic_write(cfgp, text.encode(), 0o600)
+            return self.host.canary(path, cfgp, e["canary_timeout_s"], e["ready_pattern"])
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    def _promote_staged(self, rep):
+        st, e = self.st, self.e
+        cand = st["candidate"]
+        staged = self._staged_path(cand["version"])
+        if not os.path.isfile(staged) or sha256_file(staged) != cand["sha256"]:
+            log("staged binary missing or changed; discarding candidate")
+            st["candidate"] = None
+            self.save()
+            rep["result"] = "staged-discarded"
+            return EXIT_OK
+        if e["promote_when"] == "idle":
+            try:
+                chk = self._idle_check()
+            except StatsError as ex:
+                chk = {"online": None, "decision": "unavailable", "reason": str(ex), "at": iso(self.host.now())}
+            cand["idle_check"] = chk
+            self.save()
+            rep["idle_check"] = chk
+            if chk["decision"] != "idle":
+                rep["result"] = "deferred"
+                rep["reason"] = chk.get("reason") or "router user is carrying traffic"
+                return EXIT_OK
+        return self._install(rep, cand, staged)
+    def _install(self, rep, cand, staged):
+        st, e, h = self.st, self.e, self.host
+        prev = st["current"]
+        lg = self._lg_path(prev["version"])
+        if sha256_file(e["binary"]) != prev["sha256"]:
+            raise UpdaterError("installed binary changed during run; aborting")
+        if not os.path.isfile(lg) or sha256_file(lg) != prev["sha256"]:
+            copy_atomic(e["binary"], lg)
+        st["last_good"] = dict(prev)
+        cand["stage"] = "installing"
+        self.save()
+        t0 = h.now()
+        since = journal_since(t0)
+        copy_atomic(staged, e["binary"])
+        rc, _ = h.systemctl("restart", e["unit"])
+        ok, why = (False, "systemctl restart failed") if rc != 0 else self._wait_ready(since)
+        if not ok:
+            res = self._do_rollback(cand, "service failure after promotion: " + why, rep)
+            return self._finish(rep, res)
+        st["current"] = {"version": cand["version"], "sha256": cand["sha256"], "installed_at": iso(h.now())}
+        rep["promoted"] = cand["version"]
+        with contextlib.suppress(OSError):
+            os.unlink(staged)
+        baseline = None
+        if self.stats_configured():
+            try:
+                tx, rx = self._counters()
+                baseline = {"tx": tx, "rx": rx, "at": iso(h.now())}
+            except StatsError as ex:
+                log("no router baseline (%s); recording service-only evidence" % ex)
+        if baseline is None:
+            self._finalize_good("service-only")
+            rep["result"] = "promoted"
+            rep["evidence"] = "service-only"
+            return EXIT_OK
+        cand.update(stage="verifying", started_at=iso(h.now()), baseline=baseline,
+                    progress={"consecutive": 0, "seen_online": False,
+                              "last_tx": baseline["tx"], "last_rx": baseline["rx"]})
+        self.save()
+        return self._finish(rep, self._verify_router(rep, inline=bool(e["verify_inline"])))
+
+    def _finish(self, rep, res):
+        """Map a verification/rollback outcome to rep['result'] and an exit code."""
+        rep["result"] = {"verified": "promoted", "service-only": "promoted", "pending": "verifying"}.get(res, res)
+        if res in ("rolled-back", "environment-failure"):
+            return EXIT_ROLLBACK
+        if res == "inconclusive":
+            return EXIT_TRANSIENT
+        return EXIT_OK
+    def _finalize_good(self, evidence):
+        st = self.st
+        st["last_good"] = dict(st["current"])
+        st["candidate"] = None
+        st["evidence"] = evidence
+        copy_atomic(self.e["binary"], self._lg_path(st["current"]["version"]))
+        self._prune_last_good()
+        self.save()
+
+    def _verify_router(self, rep, inline):
+        """Returns verified | service-only | pending | rolled-back | inconclusive | environment-failure."""
+        st, e, h = self.st, self.e, self.host
+        cand = st["candidate"]
+        base = cand["baseline"]
+        pr = cand.setdefault("progress", {"consecutive": 0, "seen_online": False,
+                                          "last_tx": base["tx"], "last_rx": base["rx"]})
+        deadline = parse_iso(cand["started_at"]) + e["verify_window_minutes"] * 60
+        need = int(e["verify_min_bytes"])
+        want_polls = int(e["verify_consecutive_polls"])
+        grew = lambda a, b: b - a if b >= a else b     # counter reset => restart
+        while True:
+            try:
+                tx, rx = self._counters()
+                try:
+                    online = self._online()
+                except StatsError:
+                    online = None
+                dtx, drx = grew(base["tx"], tx), grew(base["rx"], rx)
+                ptx, prx = grew(pr["last_tx"], tx), grew(pr["last_rx"], rx)
+                pr["last_tx"], pr["last_rx"] = tx, rx
+                pr["seen_online"] = bool(pr["seen_online"] or (online or 0) >= 1 or dtx > 0 or drx > 0)
+                both = ptx > 0 and prx > 0
+                pr["consecutive"] = pr["consecutive"] + 1 if both and (online is None or online >= 1) else 0
+                rep["router_growth"] = {"tx": dtx, "rx": drx, "consecutive_polls": pr["consecutive"]}
+                if (dtx >= need and drx >= need) or pr["consecutive"] >= want_polls:
+                    self._finalize_good("router-traffic")
+                    return "verified"
+                self.save()
+            except StatsError as ex:
+                if h.now() >= deadline:
+                    log("stats unavailable at deadline (%s); keeping version on service-only evidence" % ex)
+                    self._finalize_good("service-only")
+                    return "service-only"
+            if h.now() >= deadline:
+                if not pr["seen_online"]:
+                    return self._do_rollback(cand, "inconclusive: router not connected", rep, inconclusive=True)
+                return self._do_rollback(cand, "no router traffic within window", rep)
+            if not inline:
+                return "pending"
+            h.sleep(POLL_INTERVAL_S)
+    def run_cycle(self, apply):
+        st, e = self.st, self.e
+        rep = {"engine": ENGINE, "mode": "apply" if apply else "check"}
+        self._bootstrap_current()
+        inflight = st["candidate"] and st["candidate"]["stage"] in ("installing", "verifying")
+        if not apply and not inflight:       # config mode "check": report only
+            return self.dry_report(), EXIT_OK
+        if st["candidate"] and st["candidate"]["stage"] == "installing":
+            self._recover_interrupted()
+        cand = st["candidate"]
+        if cand and cand["stage"] == "verifying":   # runs even under hold: it finishes a past promotion
+            res = self._verify_router(rep, inline=bool(e["verify_inline"]))
+            rep["verification"] = res
+            if res == "pending":
+                rep["result"] = "verifying"
+                return rep, EXIT_OK
+            if res not in ("verified", "service-only"):
+                return rep, self._finish(rep, res)
+        if st["hold"]:
+            rep["result"] = "held"
+            return rep, EXIT_OK
+        cand = st["candidate"]
+        if cand and cand["stage"] == "ready":
+            rep["candidate"] = cand["version"]
+            return rep, self._promote_staged(rep)
+        rel = select_candidate(self._fetch_releases(), st, self.cfg["soak_days"], self.host.now())
+        if rel is None:
+            rep["result"] = "up-to-date"
+            return rep, EXIT_OK
+        version = fmt_version(rel.version)
+        rep["available"] = version
+        path, sha = self._fetch_and_verify(rel)
+        ok, detail = self._canary(path)
+        if not ok:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            cok, cdetail = self._canary(e["binary"])      # control: the current binary
+            if not cok:
+                reason = "inconclusive: canary control (current binary) also failed: " + cdetail
+                st["last_attempt"] = {"version": version, "result": "inconclusive", "reason": reason,
+                                      "at": iso(self.host.now())}
+                self.save()
+                rep["result"] = "inconclusive"
+                rep["not_blocked"] = {"version": version, "reason": reason}
+                return rep, EXIT_TRANSIENT
+            self._block(version, sha, "canary failed: " + detail)
+            st["last_attempt"] = {"version": version, "result": "blocked", "reason": "canary failed: " + detail,
+                                  "at": iso(self.host.now())}
+            self.save()
+            rep["result"] = "blocked"
+            rep["blocked"] = {"version": version, "reason": "canary failed: " + detail}
+            return rep, EXIT_ROLLBACK
+        st["candidate"] = {"version": version, "sha256": sha, "stage": "ready",
+                           "started_at": iso(self.host.now()), "baseline": None}
+        self.save()
+        return rep, self._promote_staged(rep)
+
+    def dry_report(self):
+        """What `run` would do, with no writes, restarts, recovery or polling."""
+        st, e = self.st, self.e
+        rep = {"engine": ENGINE, "mode": "check"}
+        cur = st["current"]
+        if not cur:      # fresh lock: read the version without persisting
+            out = self.host.run_version(e["binary"])
+            m = re.search(r"\bv(\d+\.\d+\.\d+)", out) or re.search(r"(\d+\.\d+\.\d+)", out)
+            cur = {"version": "v" + m.group(1)} if m else None
+            if not cur:
+                raise UpdaterError("cannot determine installed version")
+            st["current"] = {"version": cur["version"], "sha256": "", "installed_at": ""}
+        rep["current"] = cur["version"]
+        cand = st["candidate"]
+        if cand:
+            rep["candidate"] = {"version": cand["version"], "stage": cand["stage"]}
+            rep["result"] = {"installing": "would-recover-interrupted-promotion",
+                             "verifying": "verifying", "ready": "candidate-ready"}.get(cand["stage"], "candidate")
+            return rep
+        if st["hold"]:
+            rep["result"] = "held"
+            return rep
+        rel = select_candidate(self._fetch_releases(), st, self.cfg["soak_days"], self.host.now())
+        rep["result"] = "up-to-date" if rel is None else "update-available"
+        if rel is not None:
+            rep["available"] = fmt_version(rel.version)
+        return rep
+    def manual_rollback(self):
+        st = self.st
+        good, cur = st["last_good"], st["current"]
+        if not good or not cur or good["version"] == cur["version"]:
+            raise UpdaterError("nothing to roll back to (last_good equals current or is unset)")
+        rep = {"engine": ENGINE}
+        res = self._do_rollback(cur, "manual rollback", rep)
+        rep["result"] = res
+        return rep, EXIT_OK if rep.get("rollback_ok") else EXIT_ERROR
+    def status(self):
+        st = copy.deepcopy(self.st)
+        st["stats_configured"] = self.stats_configured()
+        if self.e["promote_when"] == "idle" and not self.stats_configured():
+            st["promotion_note"] = ("promote_when=idle needs the stats API; promotions will defer "
+                                    "until stats_url is set or promote_when=any")
+        return {"format": LOCK_FORMAT, "mode": self.cfg["mode"], "lock_path": self.cfg["lock_path"],
+                "engines": {ENGINE: st},
+                "kernel_gate": kernel_gate(self.cfg["gate"], self.host.uname_release())}
+
+
+# ---------------------------------------------------------------------- CLI
+
+def build_parser():
+    p = argparse.ArgumentParser(prog="flr-engine-update", description=__doc__.split("\n")[0])
+    p.add_argument("--config", default=os.environ.get("FLR_ENGINE_CONFIG", DEFAULT_CONFIG_PATH))
+    sub = p.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("status", help="print lock state and kernel gate as JSON")
+    sub.add_parser("check", help="dry run: report what would be updated")
+    sub.add_parser("run", help="one update cycle honoring config mode")
+    sub.add_parser("gate", help="kernel/AWG module gate; exit 4 when unsafe to reboot")
+    for name in ("hold", "unhold", "rollback"):
+        sub.add_parser(name).add_argument("engine")
+    ub = sub.add_parser("unblock")
+    ub.add_argument("engine")
+    ub.add_argument("version")
+    return p
+
+
+def emit(obj):
+    print(json.dumps(obj, indent=2, sort_keys=True))
+
+
+def main(argv=None, host=None, net=None):
+    args = build_parser().parse_args(argv)
+    try:
+        cfg = load_config(args.config)
+        if getattr(args, "engine", ENGINE) != ENGINE:
+            raise UpdaterError("unknown engine %r (supported: %s)" % (args.engine, ENGINE))
+        if args.cmd == "gate":
+            rep = kernel_gate(cfg["gate"], (host or Host()).uname_release())
+            emit(rep)
+            return EXIT_OK if rep["safe_to_reboot"] else EXIT_UNSAFE
+        if args.cmd == "status":                     # read-only: no flock needed
+            emit(Updater(cfg, host, net, dry=True).status())
+            return EXIT_OK
+        if args.cmd == "check":                      # read-only, but excludes a running `run`
+            with LockStore(cfg["lock_path"]).exclusive():
+                u = Updater(cfg, host, net, dry=True)
+                rep = u.dry_report()
+                g = kernel_gate(cfg["gate"], u.host.uname_release())
+                rep["kernel_gate"] = {k: g[k] for k in ("newest", "reboot_required", "safe_to_reboot")}
+                emit(rep)
+                return EXIT_OK
+        store = LockStore(cfg["lock_path"])
+        with store.exclusive():
+            u = Updater(cfg, host, net)
+            if args.cmd == "run":
+                rep, code = u.run_cycle(apply=cfg["mode"] == "apply")
+                g = kernel_gate(cfg["gate"], u.host.uname_release())
+                rep["kernel_gate"] = {k: g[k] for k in ("newest", "reboot_required", "safe_to_reboot")}
+                if not g["safe_to_reboot"]:
+                    log("WARNING: newest kernel %s has no AWG module; do not reboot (run 'gate')" % g["newest"])
+            elif args.cmd == "hold" or args.cmd == "unhold":
+                u.st["hold"] = args.cmd == "hold"
+                u.save()
+                rep, code = {"engine": ENGINE, "hold": u.st["hold"]}, EXIT_OK
+            elif args.cmd == "unblock":
+                v = norm_version(args.version)
+                n = len(u.st["blocked"])
+                u.st["blocked"] = [b for b in u.st["blocked"] if b["version"] != v]
+                u.save()
+                rep = {"engine": ENGINE, "unblocked": v, "removed": n - len(u.st["blocked"])}
+                code = EXIT_OK if rep["removed"] else EXIT_ERROR
+            else:  # rollback
+                rep, code = u.manual_rollback()
+            emit(rep)
+            return code
+    except UpdaterError as e:
+        log("error: %s" % e)
+        return e.code
+    except Exception as e:  # keep the unit's exit code meaningful, never dump secrets
+        log("unexpected error: %s: %s" % (type(e).__name__, e))
+        return EXIT_ERROR
+
+
+if __name__ == "__main__":
+    sys.exit(main())

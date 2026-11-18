@@ -1,0 +1,91 @@
+name: Flint runtime
+on:
+  push:
+    branches: [main, 'codex/**']
+    paths: ['runtime/**', 'client/sing-box-random-sni/**', 'policy/**', 'packages/luci-app-flr/**', 'server/**', 'ci/**', 'tests/**', '.github/workflows/runtime.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: flr-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Save canonical source bundle
+        run: |
+          git bundle create /tmp/flr-source.bundle HEAD
+          git bundle verify /tmp/flr-source.bundle
+      - name: Upload canonical source bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-source-${{ github.run_number }}
+          path: /tmp/flr-source.bundle
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Check Go formatting
+        id: formatting
+        continue-on-error: true
+        run: |
+          gofmt -w runtime
+          git diff --exit-code -- runtime
+      - name: Save formatting recovery artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-runtime-formatted-${{ github.run_number }}
+          path: runtime/**/*.go
+          if-no-files-found: error
+          retention-days: 3
+      - name: Test runtime
+        working-directory: runtime
+        run: |
+          set -o pipefail
+          go test -race -count=1 ./... 2>&1 | tee ../runtime-test.log
+      - name: Save runtime test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-runtime-test-log-${{ github.run_number }}
+          path: runtime-test.log
+          if-no-files-found: error
+          retention-days: 3
+      - name: Vet runtime
+        working-directory: runtime
+        run: go vet ./...
+      - name: Test LuCI frontend
+        run: node --test packages/luci-app-flr/tests/frontend.test.js
+      - name: Existing artifact guard tests
+        run: python3 -m unittest discover -s tests -v
+      - name: Test optional client builder guards
+        run: python3 -B client/sing-box-random-sni/test_builder.py
+      - name: Test server tools
+        run: |
+          python3 -B -m unittest discover -s server/engine-update/tests -v
+          python3 -B -m unittest discover -s server/awg-roam/tests -v
+      - name: Build ARM64 controller
+        working-directory: runtime
+        run: |
+          mkdir -p ../out/runtime
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o ../out/runtime/flr-controller ./cmd/flr-controller
+          cd ../out/runtime
+          sha256sum flr-controller > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-runtime-arm64-${{ github.run_number }}
+          path: out/runtime/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require Go formatting
+        if: always()
+        run: test '${{ steps.formatting.outcome }}' = success
