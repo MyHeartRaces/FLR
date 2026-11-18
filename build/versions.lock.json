@@ -1,22 +1,22 @@
 {
   "format": "tracegate-flr-image-lock",
-  "locked_at": "2026-10-06",
+  "locked_at": "2026-11-18",
   "openwrt": {
-    "version": "25.12.5",
+    "version": "25.12.6",
     "target": "mediatek/filogic",
     "profile": "glinet_gl-mt6000",
     "supported_device": "glinet,gl-mt6000",
     "arch": "aarch64_cortex-a53",
-    "kernel": "6.12.94",
-    "kernel_abi": "5a6c1f71be683ae9980b15d3ce73e24d",
-    "source_date_epoch": 1782737960,
-    "sdk_archive_sha256": "ff4a38a397caa2cfe1c39e18f84ddede14878221b3593c3f2c4cfe24e3ec4c25",
-    "imagebuilder_archive_sha256": "7fb6cf626582ebcbfb46974da48c1eae577213f38879eaf6b1d982041e843461",
-    "sdk_container": "ghcr.io/openwrt/sdk@sha256:011c367ac3e63ab3fd345bdb242564fedda033b40e73f883bd550fcf0d27bf9c",
-    "imagebuilder_container": "ghcr.io/openwrt/imagebuilder@sha256:45761fee3c78c9f0db51b2348e60575d99c57e0fc80fc8347078d7ca57e65e71",
+    "kernel": "6.12.112",
+    "kernel_abi": "f0a7348f9cb959e1bf4d0447669b031e",
+    "source_date_epoch": 1792273538,
+    "sdk_archive_sha256": "1c04ac47bdfc361d6aab299eb520d570e368013dedcb8d29cf39dc7168ae642e",
+    "imagebuilder_archive_sha256": "8ce0da1e2fb3d0454ebeb1e3df5705f2145e09ffe6f00d5077c18369719daf83",
+    "sdk_container": "ghcr.io/openwrt/sdk@sha256:de8a21b5ac9b434abc62dda8d3957d890f18cbd955c6c32eb91c93184fe51e9a",
+    "imagebuilder_container": "ghcr.io/openwrt/imagebuilder@sha256:02190a477f99634eadf49fd6e2ab21c8e4667a605897260d9dc5c4afb9f9b0ea",
     "feeds": {
-      "packages": "5caa62e0bc9f7fb9b0c12a23267bceb7724214dd",
-      "luci": "128a7812f4be233c5dd7f7466f534fd888785caf"
+      "packages": "093d551675b1119a06ef224d419905e8d6b2af1a",
+      "luci": "75a306df84a020c57a631ef5b4c02ace56d93387"
     }
   },
   "awg": {
