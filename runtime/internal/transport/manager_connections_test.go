@@ -20,9 +20,15 @@ type fakeAWG struct {
 	switches []string
 	good     map[string]bool
 	events   *[]string
+	// failSwitch: Switch reports an error and the previous interface stays.
+	failSwitch map[string]bool
 }
 
 func (a *fakeAWG) Switch(_ context.Context, c connection.Connection) error {
+	if a.failSwitch[c.ID] {
+		a.switches = append(a.switches, c.ID)
+		return fmt.Errorf("native AWG switch failed; previous owned state restored")
+	}
 	a.active = c.ID
 	a.switches = append(a.switches, c.ID)
 	if a.events != nil {

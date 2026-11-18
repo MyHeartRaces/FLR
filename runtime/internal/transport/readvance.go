@@ -18,8 +18,9 @@ import (
 // existing flows stay, and it remains the retained reserve after the switch.
 //
 // It runs only after a fallback (a native AWG identity was configured when the
-// proxy became the default); a proxy chosen by order alone, or kept across an
-// order edit, keeps its affinity.
+// proxy became the default, or an AWG candidate ranked above it was tried and
+// not selected in that sweep, e.g. at boot); a proxy chosen by order alone, or
+// kept across an order edit, keeps its affinity.
 //
 // Pacing and hysteresis:
 //   - The configured native identity is measured every round beside the slot

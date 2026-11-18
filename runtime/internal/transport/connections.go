@@ -40,6 +40,11 @@ type connectionState struct {
 	// been configured (a fallback), so AWG candidates ranked above it are
 	// retried (readvance.go). A proxy chosen by order alone keeps affinity.
 	readvance bool
+	// awgSkipped: an AWG candidate ranked in this sweep was tried and not
+	// selected (its switch failed or it was down). A proxy then chosen is a
+	// fallback even when no native identity is left configured, so AWG is
+	// retried later (readvance). Reset whenever a connection is selected.
+	awgSkipped bool
 }
 
 func connectionKey(c connection.Connection) string { return c.ID + ":" + c.Revision }
@@ -162,8 +167,9 @@ func (m *Manager) selectConnection(c connection.Connection, state health.State, 
 	m.state.LastError = ""
 	channel := contract.Gecko
 	if previous == nil || connectionKey(*previous) != connectionKey(c) {
-		m.connectionState().readvance = c.Family != "awg" && m.connectionState().native != nil
+		m.connectionState().readvance = c.Family != "awg" && (m.connectionState().native != nil || m.connectionState().awgSkipped)
 	}
+	m.connectionState().awgSkipped = false
 	if c.Family == "awg" {
 		channel = contract.AWG
 		m.state.AWG = state
@@ -456,6 +462,7 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 						m.cool(key, now)
 					}
 					m.state.Reason = "native identity unconfirmed; known configuration required"
+					s.awgSkipped = true
 					continue
 				}
 				copy := c.Clone()
@@ -485,6 +492,7 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 				m.cool(key, now)
 			}
 			m.state.Reason = "native connection down or recovery pending"
+			s.awgSkipped = true
 			continue
 		}
 		// The proxy slot is single: a cancelled standby admission or a
