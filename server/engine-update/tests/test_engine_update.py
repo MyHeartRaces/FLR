@@ -298,6 +298,12 @@ class TestVerification(Base):
             self.assertEqual(net.download("https://x/y", dest, max_bytes=100)[1], 100)
         with self.assertRaises(eu.UpdaterError):
             net.get_text("file:///etc/passwd")
+        # A GitHub release page larger than MAX_TEXT is valid JSON for get_json.
+        big = json.dumps([{"tag_name": "v2.15.0", "body": "x" * (2 * 1024 * 1024)}]).encode()
+        with mock.patch.object(urllib.request, "urlopen", lambda req, timeout: R(big)):
+            self.assertEqual(net.get_json("https://api.github.com/x")[0]["tag_name"], "v2.15.0")
+            with self.assertRaisesRegex(eu.UpdaterError, "too large"):
+                net.get_text("https://x/hashes.txt")
 
 
 class TestPromotion(Base):
