@@ -52,3 +52,22 @@ func TestConnectionUpdateSetsAWGRoamWithoutNewChoice(t *testing.T) {
 		}
 	}
 }
+
+// LuCI's «Вернуться к «Авто»» sends {"mode":"auto"} after a connection was
+// pinned; the stored id must not survive into the new selection.
+func TestSelectionAutoAfterConnectionSelection(t *testing.T) {
+	c := connectionAdmin(t)
+	id := c.connections.Connections[0].ID
+	if _, err := c.HandleAPI(connectionRequest(t, c, "selection", map[string]any{"selection": map[string]any{"mode": "connection", "id": id}})); err != nil {
+		t.Fatal(err)
+	}
+	if c.settings.Selection.Mode != "connection" || c.settings.Selection.ID != id {
+		t.Fatalf("connection selection not stored: %+v", c.settings.Selection)
+	}
+	if _, err := c.HandleAPI(connectionRequest(t, c, "selection", map[string]any{"selection": map[string]any{"mode": "auto"}})); err != nil {
+		t.Fatalf("auto after a connection selection rejected: %v", err)
+	}
+	if c.settings.Selection.Mode != "auto" || c.settings.Selection.ID != "" || c.settings.Selection.Family != "" {
+		t.Fatalf("stale selection fields kept: %+v", c.settings.Selection)
+	}
+}
