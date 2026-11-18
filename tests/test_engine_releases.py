@@ -35,6 +35,22 @@ class LatestEnginePolicy(unittest.TestCase):
     def test_upstream_failure_is_not_compatibility_fallback(self):
         def check(r):raise engine.IntegrityError('API unavailable')
         with self.assertRaises(engine.IntegrityError):engine.select_compatible([release(),release('v1.0.0')],check)
+    def test_http_404_is_not_found_but_other_errors_stay_integrity_failures(self):
+        import io, urllib.error
+        from unittest import mock
+        api = engine.OfficialAPI()
+        def raise_code(code):
+            def opener(*a, **k):
+                raise urllib.error.HTTPError('https://api.github.com/x', code, 'x', {}, io.BytesIO(b''))
+            return opener
+        with mock.patch('urllib.request.urlopen', raise_code(404)):
+            with self.assertRaises(engine.NotFound):
+                api.json('o/r/contents/a.go?ref=v1')
+        with mock.patch('urllib.request.urlopen', raise_code(503)):
+            with self.assertRaises(engine.IntegrityError) as caught:
+                api.json('o/r/contents/a.go?ref=v1')
+            self.assertNotIsInstance(caught.exception, engine.NotFound)
+        self.assertTrue(issubclass(engine.NotFound, engine.IntegrityError))
     def test_missing_and_mismatched_digest_abort(self):
         item=release()['assets'][0]
         item.pop('digest')

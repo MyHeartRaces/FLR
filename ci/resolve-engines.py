@@ -9,7 +9,7 @@ import sys
 
 from awg_release import MODULE_REPO, TOOLS_REPO, resolve_pair, decode_blob
 from engine_compat import NativeContracts, require_ci, check_xray_schema, check_xray_ws_source
-from engine_releases import OfficialAPI, stable, select_compatible, validate_asset, Incompatible, REPOSITORIES, asset_names, validate_selection
+from engine_releases import OfficialAPI, stable, select_compatible, validate_asset, Incompatible, NotFound, REPOSITORIES, asset_names, validate_selection
 from sing_box_source import load_local
 
 
@@ -78,7 +78,12 @@ def main():
                 texts = {}
                 # gRPC's retained settings live in a separate matching-release file.
                 for path in ['infra/conf/transport_internet.go','infra/conf/grpc.go','transport/internet/websocket/dialer.go']:
-                    blob = api.json(repository + '/contents/' + path + '?ref=' + candidate['tag_name'])
+                    try:
+                        blob = api.json(repository + '/contents/' + path + '?ref=' + candidate['tag_name'])
+                    except NotFound as error:
+                        # The release moved the config schema this build checks: it is not
+                        # a proven-compatible candidate, so an older release is selected.
+                        raise Incompatible('xray ' + candidate['tag_name'] + ' no longer has ' + path) from error
                     data = decode_blob(blob, blob.get('sha', ''))
                     texts[path] = data.decode()
                     source_schema[path] = {'git_blob':blob['sha'], 'sha256':hashlib.sha256(data).hexdigest()}

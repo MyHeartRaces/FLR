@@ -16,6 +16,9 @@ class IntegrityError(RuntimeError):
 class Incompatible(RuntimeError):
     pass
 
+class NotFound(IntegrityError):
+    """The official API answered 404: the path does not exist at that ref."""
+
 
 def version(tag):
     if not isinstance(tag, str) or len(tag) > 64 or not re.fullmatch(r'v?[0-9]+(?:\.[0-9]+){1,3}', tag):
@@ -84,6 +87,10 @@ class OfficialAPI:
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
                 data = response.read(limit + 1)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise NotFound('official path not found: ' + url) from error
+            raise IntegrityError('official fetch failed: ' + url) from error
         except (urllib.error.URLError, TimeoutError) as error:
             raise IntegrityError('official fetch failed: ' + url) from error
         if len(data) > limit:
