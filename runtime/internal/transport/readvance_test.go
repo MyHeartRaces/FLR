@@ -260,3 +260,36 @@ func TestLegacyGamesNeverOnTCPCarriedFamilyAutomatically(t *testing.T) {
 		}
 	}
 }
+
+// Boot as seen on the router after the 0.7 upgrade: AWG main is switched in
+// but its first sample fails (the WAN has just come up), the spare's switch
+// fails and leaves no native identity configured, and the proxy becomes the
+// default. AWG must still be retried, so new flows return to main once it
+// passes, while the proxy keeps running as the reserve.
+func TestReadvanceAfterBootFallbackWithoutNativeIdentity(t *testing.T) {
+	a := managedConnection(t, "awg", "a", 10)
+	a2 := managedConnection(t, "awg", "a2", 11)
+	h := managedConnection(t, "hy2", "h", 20)
+	f := newWarmFixture(t, a, a2, h)
+	f.order.Connections["awg"] = []string{"a", "a2"}
+	f.awg.good["a"] = false
+	f.awg.failSwitch = map[string]bool{"a2": true}
+	var s Snapshot
+	for i := 0; i < 3 && (s.ActiveConnection == nil || s.ActiveConnection.ID != "h"); i++ {
+		s, _ = f.round(0)
+	}
+	if s.ActiveConnection == nil || s.ActiveConnection.ID != "h" {
+		t.Fatal("boot did not fall back to the proxy", s, f.awg.switches)
+	}
+	starts, stops := len(f.b.starts), f.b.stops
+	f.awg.good["a"] = true
+	for i := 0; i < 120 && (s.ActiveConnection == nil || s.ActiveConnection.ID != "a"); i++ {
+		s, _ = f.round(5 * time.Second)
+	}
+	if s.ActiveConnection == nil || s.ActiveConnection.ID != "a" || s.Selection != (contract.Selection{General: contract.AWG, Games: contract.AWG}) {
+		t.Fatal("AWG main never retried after a boot fallback without a native identity", s, f.awg.switches)
+	}
+	if len(f.b.starts) != starts || f.b.stops != stops || !f.b.alive {
+		t.Fatal("re-advance after boot disturbed the proxy that carries existing flows")
+	}
+}
