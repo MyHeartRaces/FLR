@@ -1,0 +1,26 @@
+[Unit]
+Description=FLR engine auto-updater (Hysteria2 compatibility lock)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/flr-engine-update run
+TimeoutStartSec=45min
+Nice=10
+# Hardening. Root is needed for systemctl restart; everything else is read-only.
+ProtectSystem=strict
+# The canary child inherits this sandbox. It needs: UDP/TCP sockets (AF_INET/AF_INET6),
+# AF_NETLINK (Go interface lookups), read access to the TLS cert/key files and to
+# server.yaml outside /home. If the Hysteria YAML uses `acme:` with a writable dir,
+# add that directory to ReadWritePaths.
+ReadWritePaths=/var/lib/flr-engine /usr/local/bin
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=true

@@ -1,0 +1,14 @@
+{
+  "version": 3,
+  "rules": [
+    {
+      "domain_suffix": [
+        "ozon.ru",
+        "sberbank.ru"
+      ],
+      "ip_cidr": [
+        "45.80.0.0/24"
+      ]
+    }
+  ]
+}

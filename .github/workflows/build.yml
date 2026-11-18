@@ -1,0 +1,121 @@
+name: Flint 2 runtime image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/image-*']
+    paths-ignore: ['docs/**', '*.md']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flint-image-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    # Development stays on main; publish an image only from the final build commit.
+    if: >-
+      github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'build: final image')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - name: Checkout pinned source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Check Go formatting
+        run: |
+          gofmt -w runtime
+          git diff --exit-code -- runtime
+      - name: Save formatting recovery artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-runtime-formatted-${{ github.run_number }}
+          path: runtime/**/*.go
+          if-no-files-found: error
+          retention-days: 3
+      - name: Test and vet exact runtime source
+        working-directory: runtime
+        run: |
+          go test -race -count=1 ./...
+          go vet ./...
+          mkdir -p ../out/runtime
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o ../out/runtime/flr-controller ./cmd/flr-controller
+      - name: Build production rule renderer
+        working-directory: runtime
+        run: go build -trimpath -o "$RUNNER_TEMP/flr-affinity" ./cmd/flr-affinity
+      - name: Install approved missing qualification tools in disposable CI
+        run: |
+          missing=()
+          command -v ip >/dev/null || missing+=(iproute2)
+          command -v nft >/dev/null || missing+=(nftables)
+          command -v conntrack >/dev/null || missing+=(conntrack)
+          if ((${#missing[@]})); then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y "${missing[@]}"
+          fi
+      - name: Qualify existing TCP and UDP kernel affinity
+        shell: bash
+        run: |
+          mkdir -p out/affinity
+          sudo env GITHUB_ACTIONS=true RUNNER_OS=Linux GITHUB_SHA="$GITHUB_SHA" python3 ci/session-continuity.py "$RUNNER_TEMP/flr-affinity" "$GITHUB_WORKSPACE/policy" "$GITHUB_WORKSPACE/out/affinity/receipt.json" 2>&1 | tee out/affinity/log.txt
+      - name: Upload kernel qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-affinity-${{ github.run_number }}
+          path: out/affinity/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Export synthetic production profile contracts
+        working-directory: runtime
+        run: go run ./cmd/flr-compat ../out/engine-contracts internal/profile/testdata
+      - name: Build pinned FLR random-SNI sing-box without Naive (patched upstream source)
+        run: python3 ci/build-sing-box.py
+      - name: Resolve source-built sing-box and official compatible stable engines
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 ci/resolve-engines.py
+      - name: Save synthetic compatibility and resolved selection evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-engine-contracts-${{ github.run_number }}
+          path: |
+            out/engine-contracts/
+            out/resolved-versions.lock.json
+            out/source-versions.lock.json
+            out/sing-box/receipt.json
+            out/sing-box/SHA256SUMS
+            out/sing-box/build-*.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Check LuCI frontend
+        run: node --test packages/luci-app-flr/tests/frontend.test.js
+      - name: Check artifact guards
+        run: python3 -m unittest discover -s tests -v
+      - name: Build AWG packages and GL-MT6000 sysupgrade
+        run: python3 ci/build.py
+      - name: Upload bounded build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-build-logs-${{ github.run_number }}
+          path: out/logs/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Upload verified image
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: tracegate-flr-gl-mt6000-${{ github.run_number }}
+          path: out/release/
+          if-no-files-found: error
+          retention-days: 14

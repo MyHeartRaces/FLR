@@ -1,0 +1,11 @@
+#!/bin/sh
+# Baseline image only. VPN activation belongs to the future policy controller.
+uci -q set system.@system[0].hostname='Flint2-VPN'
+uci -q set network.lan.ip6assign='0'
+uci -q set dhcp.lan.ra='disabled'
+uci -q set dhcp.lan.dhcpv6='disabled'
+uci -q set dhcp.lan.ndp='disabled'
+uci -q commit system
+uci -q commit network
+uci -q commit dhcp
+exit 0

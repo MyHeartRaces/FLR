@@ -1,0 +1,111 @@
+#!/bin/sh
+# flr-awg-roam: accept AWG endpoint roaming (FLR lane A3) on a VPS.
+#
+# Redirects a UDP port range to the AmneziaWG listen port in a dedicated nft
+# table, so the router can move its peer endpoint port inside the range while
+# the tunnel and every inner session continue (WireGuard re-learns the peer
+# from the next authenticated packet). Same pattern as Hysteria port hopping.
+#
+#   flr-awg-roam --ports 40000-40999 --listen 51820 [--table flr_awg_roam] [--dry-run]
+#   flr-awg-roam --remove [--table flr_awg_roam] [--dry-run]
+#
+# Applying is idempotent: the table is replaced in one atomic nft transaction.
+# --dry-run prints the nft input and changes nothing. Nothing is persisted
+# across reboots; see README.md.
+set -eu
+
+usage() {
+	sed -n '9,10p' "$0" | sed 's/^#   /usage: /' >&2
+	exit 2
+}
+fail() {
+	echo "flr-awg-roam: $*" >&2
+	exit 1
+}
+is_uint() {
+	case "$1" in
+	'' | *[!0-9]* | 0?*) return 1 ;;
+	esac
+	[ "${#1}" -le 5 ]
+}
+
+ports=
+listen=
+table=flr_awg_roam
+dry_run=0
+remove=0
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--ports) [ $# -ge 2 ] || usage; ports=$2; shift 2 ;;
+	--listen) [ $# -ge 2 ] || usage; listen=$2; shift 2 ;;
+	--table) [ $# -ge 2 ] || usage; table=$2; shift 2 ;;
+	--dry-run) dry_run=1; shift ;;
+	--remove) remove=1; shift ;;
+	-h | --help) usage ;;
+	*) usage ;;
+	esac
+done
+
+case "$table" in
+'' | *[!a-z0-9_]* | [!a-z]*) fail "table name must match [a-z][a-z0-9_]*" ;;
+esac
+[ "${#table}" -le 32 ] || fail "table name too long"
+
+run_nft() {
+	command -v nft >/dev/null 2>&1 || fail "nft not found"
+	nft "$@"
+}
+
+if [ "$remove" -eq 1 ]; then
+	[ -z "$ports" ] && [ -z "$listen" ] || fail "--remove takes no --ports or --listen"
+	if [ "$dry_run" -eq 1 ]; then
+		echo "delete table inet $table"
+		exit 0
+	fi
+	if run_nft list table inet "$table" >/dev/null 2>&1; then
+		run_nft delete table inet "$table"
+		echo "removed table inet $table"
+	else
+		echo "table inet $table not present"
+	fi
+	exit 0
+fi
+
+[ -n "$ports" ] && [ -n "$listen" ] || usage
+start=${ports%%-*}
+end=${ports#*-}
+case "$ports" in
+*-*-*) fail "invalid port range" ;;
+*-*) ;;
+*) start=$ports end=$ports ;;
+esac
+is_uint "$start" && is_uint "$end" || fail "invalid port range"
+[ "$start" -ge 1024 ] && [ "$end" -le 65535 ] && [ "$start" -le "$end" ] ||
+	fail "port range must be within 1024-65535 and ordered"
+[ $((end - start + 1)) -le 10000 ] || fail "port range must hold at most 10000 ports"
+is_uint "$listen" && [ "$listen" -ge 1 ] && [ "$listen" -le 65535 ] || fail "invalid listen port"
+if [ "$listen" -ge "$start" ] && [ "$listen" -le "$end" ]; then
+	fail "listen port must be outside the roam range"
+fi
+range=$start
+[ "$start" -eq "$end" ] || range="$start-$end"
+
+ruleset() {
+	cat <<NFT
+table inet $table
+delete table inet $table
+table inet $table {
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		udp dport $range redirect to :$listen
+	}
+}
+NFT
+}
+
+if [ "$dry_run" -eq 1 ]; then
+	ruleset
+	exit 0
+fi
+ruleset | run_nft -f -
+echo "table inet $table: udp $range -> :$listen"

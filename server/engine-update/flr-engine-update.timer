@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the FLR engine auto-updater every 2 hours
+
+[Timer]
+OnCalendar=*-*-* 00/2:00:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

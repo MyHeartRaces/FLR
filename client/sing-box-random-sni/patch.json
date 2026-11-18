@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "source_commit": "c005f35300ce76427dc285481ec5695f5b179cd2",
+  "edits": [
+    {
+      "file": "option/hysteria2.go",
+      "before_sha256": "e02da3d2bbc22280a486bef4e76652c36c578b01ae8413be7fbe0adf753a0e72",
+      "replacements": [
+        {
+          "before": "type Hysteria2OutboundOptions struct {",
+          "after": "type Hysteria2OutboundOptions struct {\n\tFLRRandomSNISuffix *string `json:\"flr_random_sni_suffix,omitempty\"`"
+        }
+      ]
+    },
+    {
+      "file": "protocol/hysteria2/outbound.go",
+      "before_sha256": "25b9c083a39a7d47be9fac675a8672e68654179858f7589ae60398ece0c48d80",
+      "replacements": [
+        {
+          "before": "\"context\"",
+          "after": "\"context\"\n\t\"crypto/rand\""
+        },
+        {
+          "before": "\tvar salamanderPassword string",
+          "after": "\tif options.FLRRandomSNISuffix != nil {\n\t\ttlsConfig, err = newFLRRandomSNIConfig(tlsConfig, options, rand.Reader)\n\t\tif err != nil {\n\t\t\treturn nil, err\n\t\t}\n\t}\n\tvar salamanderPassword string"
+        }
+      ]
+    }
+  ],
+  "payloads": [
+    {
+      "file": "random_sni.go",
+      "target": "protocol/hysteria2/flr_random_sni.go",
+      "sha256": "be8ddfa58f5423abc8d3765a3c2877e88f215a3777e661a11a001836f3d9511d"
+    },
+    {
+      "file": "random_sni_test.go",
+      "target": "protocol/hysteria2/flr_random_sni_test.go",
+      "sha256": "387595a5cc7607e1423f60990392279c287f2635ecb27b49109aaf198e0666f6"
+    },
+    {
+      "file": "cmd_flr_capabilities.go",
+      "target": "cmd/sing-box/cmd_flr_capabilities.go",
+      "sha256": "21e1f714413498d76fdf7c534c664793a826b233524d5b768ae987a26c07e9cf"
+    }
+  ]
+}

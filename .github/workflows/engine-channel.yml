@@ -1,0 +1,188 @@
+name: Router engine channel
+# Builds the FLR-patched sing-box through the same CI path as the firmware image
+# (ci/build-sing-box.py + ci/check-sing-box.py), then publishes it with a
+# channel.json manifest for the on-device updater:
+#   - an immutable release engines-<YYYYMMDD>-<run_number> (never "latest")
+#     holding the ARM64 binary, channel.json and, when signed, channel.json.sig;
+#   - the rolling release engines-stable, whose channel.json (and channel.json.sig)
+#     assets are replaced; nothing else in it is touched.
+# Nothing is published when the engine sha256 values equal those already in
+# engines-stable, so published_at (the routers' soak clock) is not reset.
+# The build job runs third-party build/test code with a read-only token; the
+# publish job only handles the verified artifact. Signing happens there too.
+# Private repositories: a plain github.com release URL is not served to
+# token-authenticated clients. Each engine entry therefore also carries api_url
+# (REST asset URL); such clients must GET api_url with
+# "Authorization: Bearer <token>" and "Accept: application/octet-stream".
+# Optional signature: set the repository secret FLR_CHANNEL_SIGNING_KEY to an
+# Ed25519 private key in PEM (PKCS#8). Without it the signing steps are skipped
+# and no channel.json.sig is published.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 4 * * 1'
+permissions:
+  contents: read
+concurrency:
+  group: flr-engine-channel
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Export owned synthetic production configurations
+        working-directory: runtime
+        run: go run ./cmd/flr-compat ../out/engine-contracts internal/profile/testdata
+      - name: Check artifact guards
+        run: python3 -m unittest discover -s tests
+      - name: Build both static targets from pinned source plus FLR patch, without Naive
+        run: python3 ci/build-sing-box.py
+      - name: Check version, capability and every production sing-box configuration with matching AMD64 engine
+        run: python3 ci/check-sing-box.py
+      - name: Build and validate the channel manifest
+        run: |
+          set -euo pipefail
+          python3 ci/engine_channel.py build \
+            --repo "$GITHUB_REPOSITORY" \
+            --run-number "$GITHUB_RUN_NUMBER" \
+            --source-commit "$GITHUB_SHA"
+          python3 ci/engine_channel.py verify --manifest out/engine-channel/channel.json --repo "$GITHUB_REPOSITORY" \
+            --binary "sing-box=out/sing-box/linux-arm64/sing-box"
+      - name: Upload channel payload for the publish job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-engine-channel-${{ github.run_number }}
+          path: |
+            out/engine-channel/channel.json
+            out/engine-channel/sing-box-*-linux-arm64
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload channel evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-engine-channel-evidence-${{ github.run_number }}
+          path: |
+            out/sing-box/receipt.json
+            out/sing-box/SHA256SUMS
+            out/sing-box/build-*.log
+            out/sing-box-native.json
+          if-no-files-found: warn
+          retention-days: 14
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Fetch the build job payload
+        run: gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" -n "flr-engine-channel-$GITHUB_RUN_NUMBER" -D payload
+      - name: Re-verify manifest against the binary
+        run: |
+          set -euo pipefail
+          python3 ci/engine_channel.py verify --manifest payload/channel.json --repo "$GITHUB_REPOSITORY" \
+            --binary "sing-box=$(ls payload/sing-box-*-linux-arm64)"
+      - name: Compare with the published stable channel
+        id: compare
+        run: |
+          set -euo pipefail
+          mkdir -p current
+          if gh release download engines-stable --repo "$GITHUB_REPOSITORY" -p channel.json -D current 2> current/err.txt; then
+            :
+          elif grep -Eqi 'release not found|no assets match' current/err.txt; then
+            echo "no published channel yet (first run)"
+          else
+            cat current/err.txt >&2
+            exit 1
+          fi
+          args=(--candidate payload/channel.json)
+          [ -f current/channel.json ] && args+=(--current current/channel.json)
+          echo "same=$(python3 ci/engine_channel.py same "${args[@]}")" >> "$GITHUB_OUTPUT"
+      - name: Nothing changed
+        if: steps.compare.outputs.same == 'true'
+        run: echo "engine sha256 values equal the published channel; not publishing"
+      - name: Create immutable dated release with the binary
+        if: steps.compare.outputs.same != 'true'
+        run: |
+          set -euo pipefail
+          tag="$(python3 -c 'import json;print(json.load(open("payload/channel.json"))["engines"]["sing-box"]["url"].split("/")[-2])')"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "dated release $tag already exists; refusing to modify it" >&2
+            exit 1
+          fi
+          gh release create "$tag" payload/sing-box-*-linux-arm64 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Router engines $tag" --latest=false \
+            --notes "FLR router engine channel build from commit $GITHUB_SHA. Immutable; the on-device updater reads channel.json from the engines-stable release."
+      - name: Record the REST asset URL (private repositories)
+        if: steps.compare.outputs.same != 'true'
+        run: |
+          set -euo pipefail
+          asset="$(python3 -c 'import json;print(json.load(open("payload/channel.json"))["engines"]["sing-box"]["asset"])')"
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq ".assets[] | select(.name == \"$asset\") | .id")"
+          python3 ci/engine_channel.py api-url --manifest payload/channel.json --engine sing-box --asset-id "$id"
+          python3 ci/engine_channel.py verify --manifest payload/channel.json --repo "$GITHUB_REPOSITORY" \
+            --binary "sing-box=payload/$asset"
+      - name: Detect optional signing key
+        if: steps.compare.outputs.same != 'true'
+        id: key
+        env:
+          FLR_CHANNEL_SIGNING_KEY: ${{ secrets.FLR_CHANNEL_SIGNING_KEY }}
+        run: |
+          if [ -n "$FLR_CHANNEL_SIGNING_KEY" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Sign channel manifest (Ed25519, detached)
+        if: steps.compare.outputs.same != 'true' && steps.key.outputs.present == 'true'
+        env:
+          FLR_CHANNEL_SIGNING_KEY: ${{ secrets.FLR_CHANNEL_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          key="$RUNNER_TEMP/flr-channel-key.pem"
+          pub="$RUNNER_TEMP/flr-channel-pub.pem"
+          raw="$RUNNER_TEMP/flr-channel-sig.bin"
+          trap 'rm -f "$key" "$pub" "$raw"' EXIT
+          printf '%s\n' "$FLR_CHANNEL_SIGNING_KEY" > "$key"
+          openssl pkeyutl -sign -rawin -inkey "$key" -in payload/channel.json -out "$raw"
+          test "$(stat -c %s "$raw")" = 64
+          openssl pkey -in "$key" -pubout -out "$pub"
+          openssl pkeyutl -verify -rawin -pubin -inkey "$pub" -in payload/channel.json -sigfile "$raw"
+          base64 -w0 "$raw" > payload/channel.json.sig
+      - name: Publish manifest to the dated release and the rolling stable pointer
+        if: steps.compare.outputs.same != 'true'
+        run: |
+          set -euo pipefail
+          cd payload
+          pointer=(channel.json)
+          [ -f channel.json.sig ] && pointer+=(channel.json.sig)
+          gh release upload "$TAG" "${pointer[@]}" --repo "$GITHUB_REPOSITORY"
+          if ! gh release view engines-stable --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create engines-stable --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "Router engine channel (stable)" --latest=false \
+              --notes "Rolling pointer. Only channel.json (and channel.json.sig when signed) are replaced; binaries live in the dated engines-* releases."
+          fi
+          if [ ! -f channel.json.sig ]; then
+            # Never leave a stale signature next to a new unsigned manifest.
+            gh release delete-asset engines-stable channel.json.sig --repo "$GITHUB_REPOSITORY" --yes 2>/dev/null || true
+          fi
+          gh release upload engines-stable "${pointer[@]}" --repo "$GITHUB_REPOSITORY" --clobber

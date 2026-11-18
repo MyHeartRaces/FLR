@@ -1,0 +1,54 @@
+name: Kernel session affinity qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: flr-affinity-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  affinity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: '1.26.8'
+          cache: false
+      - name: Check controller and guards
+        run: |
+          cd runtime
+          go test -race -count=1 ./...
+          go vet ./...
+          cd ..
+          node --test packages/luci-app-flr/tests/frontend.test.js
+          python3 -m unittest discover -s tests
+      - name: Build production rule renderer
+        working-directory: runtime
+        run: go build -trimpath -o "$RUNNER_TEMP/flr-affinity" ./cmd/flr-affinity
+      - name: Install approved missing qualification tools in disposable CI
+        run: |
+          missing=()
+          command -v ip >/dev/null || missing+=(iproute2)
+          command -v nft >/dev/null || missing+=(nftables)
+          command -v conntrack >/dev/null || missing+=(conntrack)
+          if ((${#missing[@]})); then
+            sudo apt-get update
+            sudo apt-get install --no-install-recommends -y "${missing[@]}"
+          fi
+      - name: Qualify existing TCP and UDP kernel affinity
+        shell: bash
+        run: |
+          mkdir -p out/affinity
+          sudo env GITHUB_ACTIONS=true RUNNER_OS=Linux GITHUB_SHA="$GITHUB_SHA" python3 ci/session-continuity.py "$RUNNER_TEMP/flr-affinity" "$GITHUB_WORKSPACE/policy" "$GITHUB_WORKSPACE/out/affinity/receipt.json" 2>&1 | tee out/affinity/log.txt
+      - name: Upload kernel qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: flr-affinity-${{ github.run_number }}
+          path: out/affinity/
+          if-no-files-found: error
+          retention-days: 14

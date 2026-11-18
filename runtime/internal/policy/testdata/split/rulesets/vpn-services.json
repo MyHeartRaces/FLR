@@ -1,0 +1,13 @@
+{
+  "version": 3,
+  "rules": [
+    {
+      "domain_suffix": [
+        "apple.com"
+      ],
+      "ip_cidr": [
+        "17.0.0.0/8"
+      ]
+    }
+  ]
+}

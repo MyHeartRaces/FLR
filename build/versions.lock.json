@@ -1,0 +1,141 @@
+{
+  "format": "tracegate-flr-image-lock",
+  "locked_at": "2026-10-06",
+  "openwrt": {
+    "version": "25.12.5",
+    "target": "mediatek/filogic",
+    "profile": "glinet_gl-mt6000",
+    "supported_device": "glinet,gl-mt6000",
+    "arch": "aarch64_cortex-a53",
+    "kernel": "6.12.94",
+    "kernel_abi": "5a6c1f71be683ae9980b15d3ce73e24d",
+    "source_date_epoch": 1782737960,
+    "sdk_archive_sha256": "ff4a38a397caa2cfe1c39e18f84ddede14878221b3593c3f2c4cfe24e3ec4c25",
+    "imagebuilder_archive_sha256": "7fb6cf626582ebcbfb46974da48c1eae577213f38879eaf6b1d982041e843461",
+    "sdk_container": "ghcr.io/openwrt/sdk@sha256:011c367ac3e63ab3fd345bdb242564fedda033b40e73f883bd550fcf0d27bf9c",
+    "imagebuilder_container": "ghcr.io/openwrt/imagebuilder@sha256:45761fee3c78c9f0db51b2348e60575d99c57e0fc80fc8347078d7ca57e65e71",
+    "feeds": {
+      "packages": "5caa62e0bc9f7fb9b0c12a23267bceb7724214dd",
+      "luci": "128a7812f4be233c5dd7f7466f534fd888785caf"
+    }
+  },
+  "awg": {
+    "integration_repository": "https://github.com/2Grey/awg-openwrt",
+    "integration_commit": "3f3ec68d594c8e965c988af75ac5314616229c88",
+    "module_version": "3.1.20260906",
+    "module_commit": "4569c4c67f3a57414969260cafbbd04694fbaae0",
+    "tools_version": "3.1.20260812",
+    "tools_commit": "ee0f0a9aa34ff0a0da4b3433b9512781cfe02843",
+    "luci_version": "3.1.1"
+  },
+  "sing_box": {
+    "version": "1.14.4-flr-random-sni.1",
+    "package_version": "1.14.4.1",
+    "upstream_version": "1.14.4",
+    "asset_kind": "source-build",
+    "packaging": "pinned-source-build",
+    "upstream_commit": "c005f35300ce76427dc285481ec5695f5b179cd2",
+    "source_url": "https://codeload.github.com/SagerNet/sing-box/tar.gz/c005f35300ce76427dc285481ec5695f5b179cd2",
+    "source_sha256": "1c4d2b3bf261a8d98e1b026be0bbcddbcb3f53bbca77eb15e8f25f7d4e602e59",
+    "patch": {
+      "directory": "client/sing-box-random-sni",
+      "manifest_sha256": "68ae7da0794e996ca64b3a47ce6891b9aaf17c28620ac6762ceb2d07af7ca51d",
+      "original_tree_sha256": "bdaaa342882ca29e027c2d9ecfd275c2043ecfd78a8ae877726ff27b60cf8ea7",
+      "patched_tree_sha256": "5bb0db2aadeaedd7a6665f9914558ce6c6f418a633ff7527a6df104961a313b8"
+    },
+    "capabilities": [
+      "hysteria2-random-sni-per-quic-dial-v1"
+    ],
+    "go_version": "1.26.8",
+    "tags": [
+      "with_quic",
+      "with_wireguard",
+      "with_utls",
+      "with_gvisor"
+    ],
+    "cgo_enabled": false
+  },
+  "packages": [
+    "luci",
+    "luci-ssl",
+    "luci-i18n-base-ru",
+    "luci-i18n-firewall-ru",
+    "kmod-amneziawg",
+    "amneziawg-tools",
+    "luci-proto-amneziawg",
+    "luci-i18n-amneziawg-ru",
+    "flint-sing-box",
+    "ip-full",
+    "conntrack",
+    "tcpdump-mini",
+    "bind-dig",
+    "flr-runtime",
+    "luci-app-flr",
+    "flint-xray",
+    "flint-wstunnel",
+    "flint-zapret2",
+    "kmod-nfnetlink-queue",
+    "kmod-nft-queue",
+    "kmod-sched-core",
+    "kmod-sched-cake",
+    "kmod-ifb",
+    "tc-full"
+  ],
+  "remove_packages": [
+    "sing-box",
+    "sing-box-tiny"
+  ],
+  "actions": {
+    "checkout": "11d5960a326750d5838078e36cf38b85af677262",
+    "upload_artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02"
+  },
+  "runtime": {
+    "version": "0.7",
+    "go_version": "1.26.8",
+    "dependencies": {
+      "github.com/miekg/dns": "v1.1.68",
+      "golang.org/x/net": "v0.40.0",
+      "golang.org/x/sync": "v0.14.0",
+      "golang.org/x/sys": "v0.33.0",
+      "golang.org/x/tools": "v0.33.0",
+      "golang.org/x/mod": "v0.24.0"
+    },
+    "setup_go_action": "924ae3a1cded613372ab5595356fb5720e22ba16"
+  },
+  "native": {
+    "xray": {
+      "version": "26.3.27",
+      "archive": "Xray-linux-arm64-v8a.zip",
+      "url": "https://github.com/XTLS/Xray-core/releases/download/v26.3.27/Xray-linux-arm64-v8a.zip",
+      "sha256": "4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c",
+      "package": "flint-xray",
+      "binary": "usr/bin/xray",
+      "static": true
+    },
+    "wstunnel": {
+      "version": "11.0.0",
+      "archive": "wstunnel_11.0.0_linux_arm64.tar.gz",
+      "url": "https://github.com/erebe/wstunnel/releases/download/v11.0.0/wstunnel_11.0.0_linux_arm64.tar.gz",
+      "sha256": "b86abf73e340ed0c3ff9a77a5458aa27213784920ec65513132b36def45edc94",
+      "package": "flint-wstunnel",
+      "binary": "usr/bin/wstunnel",
+      "static": true
+    },
+    "zapret2": {
+      "version": "1.0.5.2",
+      "archive": "zapret2-v1.0.5.2-openwrt-embedded.tar.gz",
+      "url": "https://github.com/bol-van/zapret2/releases/download/v1.0.5.2/zapret2-v1.0.5.2-openwrt-embedded.tar.gz",
+      "sha256": "9a2b08ec8c4b40f908e55684ea29d40b2316a1f2eebb08ea6afcb1e5c9c0fc89",
+      "package": "flint-zapret2",
+      "binary": "usr/bin/nfqws2",
+      "static": true
+    }
+  },
+  "engine_policy": {
+    "selection": "official-latest-compatible-stable",
+    "reference_role": "previous build record, revalidate before fallback",
+    "validation": "production renderer + matching-version native config/CLI + paired AWG UAPI + pinned SDK/rootfs ABI",
+    "hardware_qualification": false,
+    "sing_box_selection": "pinned-minimal-source-build; no prebuilt fallback"
+  }
+}
