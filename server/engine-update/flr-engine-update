@@ -44,6 +44,9 @@ EXIT_BUSY = 5         # another run holds the lock
 
 MAX_DOWNLOAD = 64 * 1024 * 1024
 MAX_TEXT = 1024 * 1024
+# GitHub release listings carry every asset and the release notes; Hysteria
+# publishes ~40 assets per release, so one page exceeds MAX_TEXT.
+MAX_JSON = 8 * 1024 * 1024
 DOWNLOAD_DEADLINE_S = 900
 POLL_INTERVAL_S = 30
 ELF_MACHINES = {"x86-64": 62, "aarch64": 183, "arm": 40, "i386": 3, "riscv": 243}
@@ -308,15 +311,15 @@ class Net:
         h.update(headers or {})
         return urllib.request.urlopen(urllib.request.Request(url, headers=h), timeout=self.timeout)
 
-    def get_text(self, url, headers=None):
+    def get_text(self, url, headers=None, limit=MAX_TEXT):
         with self._open(url, headers) as r:
-            raw = r.read(MAX_TEXT + 1)
-        if len(raw) > MAX_TEXT:
+            raw = r.read(limit + 1)
+        if len(raw) > limit:
             raise UpdaterError("response too large", EXIT_TRANSIENT)
         return raw.decode("utf-8", "replace")
 
     def get_json(self, url, headers=None):
-        return json.loads(self.get_text(url, headers))
+        return json.loads(self.get_text(url, headers, MAX_JSON))
 
     def download(self, url, dest, max_bytes=MAX_DOWNLOAD):
         """Stream to dest; return (sha256_hex, size). Enforces the size bound."""
@@ -740,7 +743,7 @@ class Updater:
 
     # -- fetch + verify
     def _fetch_releases(self):
-        url = "https://api.github.com/repos/%s/releases?per_page=30" % self.e["repo"]
+        url = "https://api.github.com/repos/%s/releases?per_page=10" % self.e["repo"]
         try:
             return parse_releases(self.net.get_json(url, {"Accept": "application/vnd.github+json"}))
         except UpdaterError:
