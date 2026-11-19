@@ -117,7 +117,7 @@ jobs:
       - name: Upload verified image
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: tracegate-flr-gl-mt6000-${{ github.run_number }}
+          name: flr-gl-mt6000-${{ github.run_number }}
           path: out/release/
           if-no-files-found: error
           retention-days: 14

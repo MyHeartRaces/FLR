@@ -20,7 +20,7 @@ shutil.copytree(project / "files", overlay)
 share = overlay / "usr/share/flint-vpn"
 shutil.copytree(project / "policy", share / "policy", dirs_exist_ok=True)
 metadata = {
-    "project": "tracegate-flr", "stage": "runtime-image",
+    "project": "flr", "stage": "runtime-image",
     "git_commit": os.environ.get("GIT_COMMIT", "local-unpublished"),
     "runtime_controller_implemented": True, "routing_dns_failover_implemented": True,
     "router_contacted": False, "boot_runtime_tested": False, "recovery_tested": False,

@@ -81,7 +81,7 @@ class OfficialAPI:
         self.token = token
 
     def read(self, url, limit=MAX_DOWNLOAD):
-        headers = {'User-Agent': 'tracegate-flr-compatible-build', 'Accept': 'application/vnd.github+json'}
+        headers = {'User-Agent': 'flr-compatible-build', 'Accept': 'application/vnd.github+json'}
         if self.token and url.startswith('https://api.github.com/'):
             headers['Authorization'] = 'Bearer ' + self.token
         try:
