@@ -1,6 +1,10 @@
 #!/bin/sh
 # Baseline image only. VPN activation belongs to the future policy controller.
-uci -q set system.@system[0].hostname='Flint2-VPN'
+# The router is named FLR (shown in the LuCI header). A name the owner chose
+# is kept; only stock and earlier image names are replaced.
+case "$(uci -q get system.@system[0].hostname)" in
+ ''|OpenWrt|GL-MT6000|Flint2-VPN|Router-VPN) uci -q set system.@system[0].hostname='FLR' ;;
+esac
 uci -q set network.lan.ip6assign='0'
 uci -q set dhcp.lan.ra='disabled'
 uci -q set dhcp.lan.dhcpv6='disabled'

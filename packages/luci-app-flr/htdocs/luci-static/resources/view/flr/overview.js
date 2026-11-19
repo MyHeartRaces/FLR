@@ -42,7 +42,7 @@ return view.extend({
      E('p',{},_('The time of successful HTTPS/DNS requests is measured in ms; errors do not count as time. These observations do not prove intentional throttling.')));
     ['Cloudflare','Google'].forEach(function(name,i){var b=baselines[i] || {},t=targets[i] || {};children.push(E('p',{},[_('%s: errors %s · slow TCP/UDP %s/%s · last TCP/UDP %s/%s ms · baseline TCP/UDP %s/%s ms').format(name,(w.failed || [])[i] || 0,(w.tcp_slow || [])[i] || 0,(w.udp_slow || [])[i] || 0,t.tcp?t.tcp_duration_ms:_('failed / no data'),t.udp?t.udp_duration_ms:_('failed / no data'),b.tcp_ms || _('none yet'),b.udp_ms || _('none yet'))]));});
    }
-   children.push(E('details',{class:'flr-details'},[E('summary',{},_('Detailed channel checks')),E('pre',{},[JSON.stringify(s.channels || {},null,2)])]),flr.action(_('Repeat the checks'),{operation:'refresh'},refresh));
+   children.push(E('details',{class:'flr-details'},[E('summary',{},_('Detailed channel checks')),E('pre',{},[JSON.stringify(s.channels || {},null,2)])]),flr.action(_('Repeat the checks'),{operation:'refresh'},refresh),flr.projectLink());
    box.replaceChildren.apply(box,children);
   };
   var refresh=function(){return flr.read({operation:'status'}).then(update).catch(flr.error);};

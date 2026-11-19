@@ -1,0 +1,4 @@
+#!/bin/sh
+# Refuse commits that add private material (credentials, connection links,
+# private routing lists, live hosts). Enable: git config core.hooksPath ci/git-hooks
+exec python3 "$(git rev-parse --show-toplevel)/ci/check_public_tree.py" --staged

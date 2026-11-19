@@ -66,6 +66,8 @@ return baseclass.extend({
   return copy;
  },
  style:function(){return E('link',{rel:'stylesheet',href:L.resource('flr.css')});},
+ projectURL:'https://github.com/MyHeartRaces/FLR',
+ projectLink:function(){return E('p',{class:'flr-project'},[_('FLR source code, releases and documentation:'),' ',E('a',{href:this.projectURL,target:'_blank',rel:'noopener'},this.projectURL.replace('https://',''))]);},
  httpRequestBytes:httpRequestBytes,
  boundedJSON:function(request,method) {return bounded(request,method || 'write');},
  group:function(value) {
