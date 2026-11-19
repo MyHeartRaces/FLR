@@ -138,7 +138,7 @@ func DoH(ctx context.Context, q *mdns.Msg, channel contract.Channel, ip, hostnam
 	default:
 		return nil, fmt.Errorf("invalid DNS channel")
 	}
-	return dohExchange(ctx, q, fmt.Sprintf("vpn|%d|%s|%s", channel, ip, hostname), ip, hostname, dial)
+	return dohExchange(ctx, q, fmt.Sprintf("vpn|%s|%s|%s", channel, ip, hostname), ip, hostname, dial)
 }
 
 // DoHDirect resolves q over DNS-over-HTTPS straight through the WAN, for
