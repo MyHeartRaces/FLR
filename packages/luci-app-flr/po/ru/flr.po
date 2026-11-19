@@ -1917,3 +1917,147 @@ msgstr "qBittorrent и помощь"
 
 msgid "FLR source code, releases and documentation:"
 msgstr "Исходный код, релизы и документация FLR:"
+
+#: htdocs/luci-static/resources/flr.js:205
+msgid "The import status was lost. Check the routing overview."
+msgstr "Состояние импорта потеряно. Проверьте обзор маршрутизации."
+
+#: htdocs/luci-static/resources/flr.js:209
+msgid "The import is taking too long. Check the routing overview later."
+msgstr "Импорт идёт слишком долго. Проверьте обзор маршрутизации позже."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Waiting to start…"
+msgstr "Ожидание запуска…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Downloading the profile…"
+msgstr "Загрузка профиля…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Downloading geosite…"
+msgstr "Загрузка geosite…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Downloading geoip…"
+msgstr "Загрузка geoip…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Converting…"
+msgstr "Преобразование…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Installing…"
+msgstr "Установка…"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:50
+msgid "through the VPN (AWG)"
+msgstr "через VPN (AWG)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:50
+msgid "through the VPN (Hysteria2)"
+msgstr "через VPN (Hysteria2)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:50
+msgid "through the VPN (VLESS)"
+msgstr "через VPN (VLESS)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:50
+msgid "through the ISP (WAN)"
+msgstr "через провайдера (WAN)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:53
+msgid "%s: %s entries — %s"
+msgstr "%s: записей %s — %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:58
+msgid "Installed: the previous policy is kept as the backup."
+msgstr "Установлено: прежняя политика сохранена как резервная копия."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:58
+msgid "Preview only: nothing was changed."
+msgstr "Только предпросмотр: ничего не изменено."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:59
+msgid "Profile: %s"
+msgstr "Профиль: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:60
+msgid "Downloads went %s."
+msgstr "Загрузки шли %s."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:61
+msgid "From the profile"
+msgstr "Из профиля"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:62
+msgid "Categories: %s"
+msgstr "Категории: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:63
+msgid "Skipped entries"
+msgstr "Пропущенные записи"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:63
+msgid "Not applied by FLR"
+msgstr "Не применяется FLR"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:64
+msgid "Notes"
+msgstr "Примечания"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:69
+msgid "Choose a preset, enter an HTTPS URL or choose a profile file."
+msgstr "Выберите готовый профиль, введите HTTPS URL или выберите файл профиля."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:70
+msgid "The profile file is empty or larger than 1 MiB."
+msgstr "Файл профиля пуст или больше 1 МиБ."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:71
+msgid "Import this RoscomVPN profile? It replaces the current routing policy on the router. The previous policy is kept as the backup and can be brought back with \"Restore backup\". Custom rules stay as they are."
+msgstr "Импортировать этот профиль RoscomVPN? Он заменит текущую политику маршрутизации на роутере. Прежняя политика сохраняется как резервная копия, её можно вернуть кнопкой «Восстановить резервную копию». Собственные правила не меняются."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:81
+msgid "Imported."
+msgstr "Импортировано."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:81
+msgid "Preview ready."
+msgstr "Предпросмотр готов."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:85
+msgid "Whitelist preset"
+msgstr "Профиль Whitelist"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:85
+msgid "Default preset"
+msgstr "Профиль Default"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:86
+msgid "RoscomVPN routing profile"
+msgstr "Профиль маршрутизации RoscomVPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:87
+msgid "Converts a RoscomVPN routing profile (Happ or INCY JSON, or its routing link) into the private policy overlay: DirectSites and DirectIp become the broad direct lists, ProxySites and ProxyIp always go through the VPN, private destinations stay local, everything else keeps going through the VPN. Blocking, DNS and fake-DNS settings of the profile are not applied. Custom rules stay as they are."
+msgstr "Преобразует профиль маршрутизации RoscomVPN (JSON для Happ или INCY либо его ссылку routing) в частную политику: DirectSites и DirectIp становятся широкими списками напрямую, ProxySites и ProxyIp всегда идут через VPN, частные назначения остаются локальными, всё остальное по-прежнему идёт через VPN. Блокировки, DNS и fake-DNS из профиля не применяются. Собственные правила не меняются."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:88
+msgid "The router downloads the profile and the geosite and geoip files it names: through the VPN while the VPN runs, otherwise through the ISP. Preview shows the result without changing anything; Import replaces the current routing policy and keeps the previous one as the backup."
+msgstr "Роутер сам загружает профиль и указанные в нём файлы geosite и geoip: через VPN, пока VPN работает, иначе через провайдера. «Предпросмотр» показывает результат, ничего не меняя; «Импорт» заменяет текущую политику маршрутизации и сохраняет прежнюю как резервную копию."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:90
+msgid "Profile URL (HTTPS)"
+msgstr "URL профиля (HTTPS)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:91
+msgid "Or a profile file (it takes precedence over the URL)"
+msgstr "Или файл профиля (он важнее URL)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:92
+msgid "Preview"
+msgstr "Предпросмотр"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:92
+msgid "Import RoscomVPN profile"
+msgstr "Импортировать профиль RoscomVPN"

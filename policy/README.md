@@ -40,3 +40,16 @@ file, imports such a file as the overlay (the previous overlay is kept as
 `/etc/flr-runtime/policy.backup`), and resets to the image default. Changes
 apply to new connections without restarting the VPN. API and file formats:
 `docs/ROUTER-API.md`, "Routing policy API".
+
+## RoscomVPN profiles
+
+The same page can build the overlay from a RoscomVPN routing profile (Happ or
+INCY JSON, an edited copy, or its routing link): presets for the published
+Whitelist and Default profiles, an HTTPS URL or a file. The router downloads
+the geosite and geoip files the profile names (through the VPN while it
+runs), converts DirectSites/DirectIp into the broad direct lists,
+ProxySites/ProxyIp into VPN lists and private categories into local
+destinations, and installs the result like an import: the previous overlay
+becomes the backup, custom rules stay. Preview shows the conversion report
+without changing anything. It never runs on its own. Mapping, skipped
+entries, download path and limits: `docs/ROUTER-API.md`, "RoscomVPN import".

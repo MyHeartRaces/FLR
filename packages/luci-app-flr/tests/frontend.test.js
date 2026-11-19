@@ -491,7 +491,7 @@ async function routingHarness(page,canWrite=true,respond) {
    default:return {ok:true,data:{apply:{applied:true,source:'overlay',mode:'split'},revision:'rev2'}};
   }
  };
- const flr=api(reply,canWrite,transport,{document:b.document,Blob:b.Blob,URL:b.URL});
+ const flr=api(reply,canWrite,transport,{document:b.document,Blob:b.Blob,URL:b.URL,setTimeout:f=>setImmediate(f)});
  const scope={view:{extend:x=>x},E:luciElement,flr,L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:b.window,document:b.document};
  const mod=run(fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/routing',page+'.js'),'utf8'),scope,page);
  const tree=mod.render(await mod.load());
@@ -611,4 +611,71 @@ test('rpcd ACL needs no change: routing reads use the read method, routing write
  const h=await routingHarness('overview');assert.ok(h.requests().every(r=>r.method==='read'));
  const acl=JSON.parse(fs.readFileSync(path.join(root,'root/usr/share/rpcd/acl.d/luci-app-flr.json')));
  assert.deepEqual(acl['luci-app-flr'].write.ubus,{'luci.flr':['write']});
+});
+
+// ---- RoscomVPN import -----------------------------------------------------
+const WHITELIST='https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/refs/heads/main/HAPP/WHITELIST.JSON';
+function roscomResult(installed){return {dry_run:!installed,installed,download_path:'vpn-awg',source:WHITELIST,backup_present:installed,apply:installed?{applied:true,source:'overlay',mode:'split'}:undefined,
+ report:{name:'Synthetic <img src=x>',rulesets:{'roscom-direct-ips':{total:3,imported:3,counts:{ip_cidr:3}},'local-ips':{total:5,imported:1,counts:{ip_cidr:5}}},categories:[{list:'DirectIp',name:'geoip:direct',entries:3}],
+  skipped:[{field:'DirectIp',reason:'IPv6: FLR routes IPv4 only <b>x</b>',count:2,examples:['2001:db8::/32']}],not_applied:[{field:'BlockSites',reason:'FLR does not block destinations',count:3}],notes:['DirectSites and DirectIp apply in routing mode split only']}};}
+test('RoscomVPN preview sends the preset URL as a dry run and shows the report as text',async()=>{
+ const h=await routingHarness('transfer',true,r=>r.operation==='routing-roscomvpn-import'?{ok:true,data:{...roscomResult(false),pending:false}}:undefined);
+ const url=h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url');
+ await h.click('Профиль Whitelist');assert.equal(url.value,WHITELIST);
+ await h.click('Предпросмотр');
+ assert.deepEqual(h.requests().at(-1),{method:'write',operation:'routing-roscomvpn-import',routing:{dry_run:true,url:WHITELIST}});
+ assert.equal(h.browser.confirms.length,0,'a preview changes nothing and needs no confirmation');
+ const text=h.text();
+ assert.match(text,/Только предпросмотр: ничего не изменено/);assert.match(text,/через VPN \(AWG\)/);assert.match(text,/roscom-direct-ips/);
+ assert.match(text,/DirectIp: записей 2 — IPv6/);assert.match(text,/BlockSites: записей 3/);assert.match(text,/geoip:direct · 3/);
+ assert.equal(h.nodes().some(n=>n.parsedFrom),false,'report text parsed as HTML');
+ await h.click('Профиль Default');assert.match(url.value,/HAPP\/DEFAULT\.JSON$/);
+});
+test('RoscomVPN import asks for confirmation that names the replacement and the backup, then polls the job',async()=>{
+ let polls=0;
+ const h=await routingHarness('transfer',true,r=>{
+  if(r.operation==='routing-roscomvpn-import')return {ok:true,data:{pending:true,job:'0123456789abcdef',dry_run:false,download_path:'vpn-awg'}};
+  if(r.operation==='routing-roscomvpn-status'){polls++;return {ok:true,data:{job:polls<3?{id:'0123456789abcdef',pending:true,phase:'downloading geoip'}:{id:'0123456789abcdef',pending:false,phase:'done',result:roscomResult(true)}}};}
+ });
+ h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url').value=WHITELIST;
+ h.browser.confirmReply=false;await h.click('Импортировать профиль RoscomVPN');
+ assert.equal(h.requests().filter(r=>r.operation==='routing-roscomvpn-import').length,0,'import sent without confirmation');
+ const question=h.browser.confirms.at(-1);
+ assert.match(question,/заменит текущую политику маршрутизации/);assert.match(question,/резервная копия/);assert.match(question,/«Восстановить резервную копию»/);
+ h.browser.confirmReply=true;await h.click('Импортировать профиль RoscomVPN');
+ const reqs=h.requests();
+ assert.deepEqual(reqs.find(r=>r.operation==='routing-roscomvpn-import'),{method:'write',operation:'routing-roscomvpn-import',routing:{accepted:true,url:WHITELIST}});
+ assert.deepEqual(reqs.filter(r=>r.operation==='routing-roscomvpn-status').map(r=>r.method),['read','read','read']);
+ assert.match(h.text(),/Установлено: прежняя политика сохранена как резервная копия/);assert.match(h.text(),/Резервная копия|резервная копия/);
+ assert.ok(h.transport.notes.some(n=>/Применено к новым соединениям/.test(n.text)));
+});
+test('RoscomVPN failed job and missing input are reported; read-only users cannot start it',async()=>{
+ const h=await routingHarness('transfer',true,r=>{
+  if(r.operation==='routing-roscomvpn-import')return {ok:true,data:{pending:true,job:'0123456789abcdef'}};
+  if(r.operation==='routing-roscomvpn-status')return {ok:true,data:{job:{id:'0123456789abcdef',pending:false,phase:'failed',error:'geoip download failed (vpn-awg): HTTP status 404'}}};
+ });
+ await h.click('Предпросмотр');assert.match(h.transport.notes.at(-1).text,/HTTPS URL/);assert.equal(h.requests().filter(r=>r.method==='write').length,0);
+ h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url').value='http://profiles.example.com/x';
+ await h.click('Предпросмотр');assert.equal(h.requests().filter(r=>r.method==='write').length,0,'plain HTTP sent');
+ h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url').value='https://profiles.example.com/x';
+ await h.click('Предпросмотр');assert.match(h.transport.notes.at(-1).text,/geoip download failed/);
+ const ro=await routingHarness('transfer',false);
+ for(const label of ['Предпросмотр','Импортировать профиль RoscomVPN'])assert.equal(ro.find(label).disabled,true,label);
+ assert.equal(ro.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url').disabled,true);
+});
+test('RoscomVPN profile file goes through the chunked staging, then the import names the staging ID',async()=>{
+ const data=Buffer.from('happ://routing/onadd/'+Buffer.from(JSON.stringify({Name:'Edited',DirectSites:['domain:example.com']})).toString('base64')),sum=crypto.createHash('sha256').update(data).digest('hex');
+ const h=await routingHarness('transfer',true,r=>{
+  if(r.operation==='routing-import-begin')return {ok:true,data:{staging_id:'fedcba9876543210',size:r.routing.size,chunk_bytes:32768}};
+  if(r.operation==='routing-import-chunk')return {ok:true,data:{received:r.routing.offset}};
+  if(r.operation==='routing-roscomvpn-import')return {ok:true,data:{...roscomResult(false),pending:false,source:'uploaded file'}};
+ });
+ const input=h.nodes().find(n=>n.tag==='input'&&n.attrs.type==='file'&&/deeplink/.test(n.attrs.accept));
+ input.files=[{name:'DEFAULT.DEEPLINK',size:data.length,arrayBuffer:async()=>data.buffer.slice(data.byteOffset,data.byteOffset+data.length)}];
+ await h.click('Предпросмотр');
+ const writes=h.requests().filter(r=>r.method==='write');
+ assert.deepEqual(writes.map(r=>r.operation),['routing-import-begin','routing-import-chunk','routing-roscomvpn-import']);
+ assert.deepEqual(writes[0].routing,{size:data.length,sha256:sum});
+ assert.deepEqual(writes[2].routing,{dry_run:true,staging_id:'fedcba9876543210'});
+ input.files=[{name:'big.json',size:1024*1024+1,arrayBuffer:async()=>new ArrayBuffer(1)}];const count=h.requests().length;await h.click('Предпросмотр');assert.equal(h.requests().length,count,'oversized profile sent');
 });

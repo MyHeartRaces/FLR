@@ -86,6 +86,9 @@ type routingArgs struct {
 	Staging  string             `json:"staging_id,omitempty"`
 	Data     string             `json:"data,omitempty"`
 	Accepted bool               `json:"accepted,omitempty"`
+	// RoscomVPN import (roscomvpn_api.go).
+	URL    string `json:"url,omitempty"`
+	DryRun bool   `json:"dry_run,omitempty"`
 }
 
 // routingBundle is the import/export document. A bundle may carry the policy
@@ -299,6 +302,9 @@ func (c *Controller) handleRoutingAPI(r control.APIRequest) (any, bool, error) {
 			return nil, true, fmt.Errorf("invalid routing arguments: %v", e)
 		}
 	}
+	if (args.URL != "" || args.DryRun) && r.Operation != "routing-roscomvpn-import" {
+		return nil, true, fmt.Errorf("invalid routing arguments: url and dry_run belong to routing-roscomvpn-import")
+	}
 	var result any
 	var err error
 	switch r.Operation {
@@ -329,6 +335,10 @@ func (c *Controller) handleRoutingAPI(r control.APIRequest) (any, bool, error) {
 		result = map[string]bool{"aborted": true}
 	case "routing-reset", "routing-restore-backup":
 		result, err = c.routingOverlaySwap(r.Operation, args)
+	case "routing-roscomvpn-import":
+		result, err = c.roscomImport(args)
+	case "routing-roscomvpn-status":
+		result, err = c.roscomStatus()
 	default:
 		err = fmt.Errorf("unknown operation")
 	}

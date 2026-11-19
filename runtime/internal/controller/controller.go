@@ -136,6 +136,10 @@ type Controller struct {
 	applyStaticSets func(*policy.Policy) error
 	// routing: custom rules and routing policy API state (policy_api.go).
 	routing routingState
+	// roscom is the last RoscomVPN import job (roscomvpn_api.go), guarded by
+	// mu; routingFetch replaces its HTTPS downloader in tests.
+	roscom       *roscomJob
+	routingFetch routingFetcher
 	// roamSuspended mirrors what was last passed to SetRoamSuspended (held
 	// while a connection test runs). Guarded by adminMu.
 	roamSuspended bool
