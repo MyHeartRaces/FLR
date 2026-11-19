@@ -182,14 +182,18 @@ func TestRoutingOverviewEntriesAndOverlayFallback(t *testing.T) {
 	if rs := byName["direct-essential"]; rs["class"] != "direct" || rs["meta"].(map[string]any)["source"] != "synthetic" || rs["active"] != true {
 		t.Fatalf("direct-essential: %v", rs)
 	}
-	c.settings.RoutingMode = policy.ModeFull
+	if _, err := c.HandleAPI(control.APIRequest{Operation: "settings", Settings: json.RawMessage(`{"routing_mode":"full"}`)}); err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range mustRouting(t, c, "routing-policy", nil)["rulesets"].([]any) {
 		rs := item.(map[string]any)
 		if want := rs["name"] != "direct-essential" && !strings.HasPrefix(rs["name"].(string), "roscom-"); rs["active"] != want {
 			t.Fatalf("full mode activity: %v", rs)
 		}
 	}
-	c.settings.RoutingMode = ""
+	if _, err := c.HandleAPI(control.APIRequest{Operation: "settings", Settings: json.RawMessage(`{"routing_mode":"split"}`)}); err != nil {
+		t.Fatal(err)
+	}
 	page := mustRouting(t, c, "routing-entries", map[string]any{"ruleset": "vpn-services", "offset": 2400, "limit": 200})
 	if page["total"] != float64(2500) || page["matched"] != float64(2500) || len(page["entries"].([]any)) != 100 {
 		t.Fatalf("paging: %v %v", page["total"], len(page["entries"].([]any)))
