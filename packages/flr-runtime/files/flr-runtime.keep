@@ -52,3 +52,6 @@
 /etc/flr-runtime/policy.backup/rulesets/vpn-services.json
 /etc/flr-runtime/policy.backup/rulesets/roscom-direct-domains.json
 /etc/flr-runtime/policy.backup/rulesets/roscom-direct-ips.json
+# Optional local DNS filter of salted name hashes (none in the image;
+# runtime/internal/dns/filter.go).
+/etc/flr-runtime/dnsfilter
