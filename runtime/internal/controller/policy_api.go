@@ -841,11 +841,11 @@ func (c *Controller) stageOverlay(b *routingBundle) (string, error) {
 
 // installOverlay replaces the overlay with candidate and keeps the previous
 // overlay as the backup. It returns an undo function for a later failure.
-func (c *Controller) installOverlay(candidate string) (undo, keep func(), err error) {
+func (c *Controller) installOverlay(candidate string) (func(), func(), error) {
 	overlay, backup := c.overlayDir(), c.overlayBackupDir()
 	for _, path := range []string{overlay, backup} {
 		if e := privatefile.SafePath(path); e != nil {
-			return nil, e
+			return nil, nil, e
 		}
 	}
 	had := exists(overlay)
