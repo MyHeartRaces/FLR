@@ -256,15 +256,19 @@ func (c *Controller) runRoscom(ctx context.Context, job *roscomJob, req roscomRe
 		}
 		return data, nil
 	}
+	// Published provenance never carries a query, user information or
+	// fragment (they may hold tokens): scheme, host and path, plus the
+	// SHA-256 of what was read. Full URLs are used only to fetch.
 	source := "uploaded file"
 	raw := req.Profile
 	if req.URL != "" {
-		source = req.URL
+		source = geodata.SourceURL(req.URL)
 		var err error
 		if raw, err = download("profile", req.URL, geodata.MaxProfileBytes, roscomProfileTimeout); err != nil {
 			return nil, err
 		}
 	}
+	profileSum := sha256.Sum256(raw)
 	body, err := geodata.ProfileJSON(raw)
 	if err != nil {
 		return nil, err
@@ -276,7 +280,7 @@ func (c *Controller) runRoscom(ctx context.Context, job *roscomJob, req roscomRe
 	if err != nil {
 		return nil, fmt.Errorf("profile rejected: %v", err)
 	}
-	in := geodata.Input{Profile: profile, ProfileSource: source, LocalDomains: req.LocalDomains, LocalIPs: req.LocalIPs}
+	in := geodata.Input{Profile: profile, ProfileSource: source, ProfileSHA256: hex.EncodeToString(profileSum[:]), LocalDomains: req.LocalDomains, LocalIPs: req.LocalIPs}
 	needSites, needIPs := profile.Needs()
 	data := map[string]any{}
 	if needSites {
@@ -287,11 +291,12 @@ func (c *Controller) runRoscom(ctx context.Context, job *roscomJob, req roscomRe
 		if err != nil {
 			return nil, err
 		}
-		if in.Sites, err = geodata.ParseSites(b); err != nil {
+		if in.Sites, err = geodata.ParseSites(ctx, b); err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(b)
-		data["geosite"] = map[string]any{"url": profile.GeositeURL, "bytes": len(b), "sha256": hex.EncodeToString(sum[:]), "categories": in.Sites.Len()}
+		in.GeositeSource, in.GeositeSHA256 = geodata.SourceURL(profile.GeositeURL), hex.EncodeToString(sum[:])
+		data["geosite"] = map[string]any{"url": in.GeositeSource, "bytes": len(b), "sha256": in.GeositeSHA256, "categories": in.Sites.Len()}
 	}
 	if needIPs {
 		if profile.GeoipURL == "" {
@@ -301,16 +306,17 @@ func (c *Controller) runRoscom(ctx context.Context, job *roscomJob, req roscomRe
 		if err != nil {
 			return nil, err
 		}
-		if in.IPs, err = geodata.ParseIPs(b); err != nil {
+		if in.IPs, err = geodata.ParseIPs(ctx, b); err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(b)
-		data["geoip"] = map[string]any{"url": profile.GeoipURL, "bytes": len(b), "sha256": hex.EncodeToString(sum[:]), "categories": in.IPs.Len()}
+		in.GeoipSource, in.GeoipSHA256 = geodata.SourceURL(profile.GeoipURL), hex.EncodeToString(sum[:])
+		data["geoip"] = map[string]any{"url": in.GeoipSource, "bytes": len(b), "sha256": in.GeoipSHA256, "categories": in.IPs.Len()}
 	}
 	c.setRoscomPhase(job, "converting")
 	t := time.Now()
 	in.ImportedAt = time.Now().UTC()
-	overlay, err := geodata.Convert(in)
+	overlay, err := geodata.Convert(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +330,7 @@ func (c *Controller) runRoscom(ctx context.Context, job *roscomJob, req roscomRe
 		return nil, fmt.Errorf("the converted policy (%d bytes) exceeds the routing bundle limit; use a smaller profile", len(exported))
 	}
 	timings["convert_ms"] = sinceMS(t)
-	result := map[string]any{"dry_run": req.DryRun, "installed": false, "download_path": req.Route.Path, "source": source, "data": data, "report": overlay.Report, "timings": timings}
+	result := map[string]any{"dry_run": req.DryRun, "installed": false, "download_path": req.Route.Path, "source": source, "source_sha256": in.ProfileSHA256, "data": data, "report": overlay.Report, "timings": timings}
 	if req.DryRun {
 		timings["total_ms"] = sinceMS(started)
 		return result, nil
@@ -444,49 +450,71 @@ func fetchHTTPS(ctx context.Context, route downloadRoute, rawURL string, limit i
 	return data, nil
 }
 
-// routeDialer returns a TCP dialer to host:port over the route, the same
-// way the engine updater reaches the internet through the tunnel: AWG binds
-// to flr_awg with the AWG channel mark and resolves through the tunnel; the
-// proxy channels use their local SOCKS listener, which resolves the name on
-// the server side; the WAN path is the subscription fetcher's (1.1.1.1 over
-// the WAN, outer mark).
+// socksDial and socksProxies reach the proxy channels' local SOCKS
+// listeners (replaced in tests).
+var (
+	socksDial    = socks.DialContext
+	socksProxies = map[string]string{"vpn-gecko": "127.0.0.1:1081", "vpn-vless": "127.0.0.1:1082"}
+)
+
+// tunnelDNS is the resolver the downloads use inside the tunnel.
+const tunnelDNS = "1.1.1.1:53"
+
+// routeDialer returns a TCP dialer to host:port over the route, the way the
+// engine updater reaches the internet through the tunnel. Every path
+// resolves the name itself through that same path and connects only to a
+// validated public IPv4 address; the hostname stays with the HTTP client
+// for TLS SNI and certificate checks. That holds for redirects too, since
+// every connection goes through this dialer.
+//   - vpn-awg: DNS (UDP) and TCP bound to flr_awg with the AWG channel mark;
+//   - vpn-gecko, vpn-vless: DNS over TCP to the tunnel resolver through the
+//     channel's local SOCKS listener, then a SOCKS CONNECT to the numeric
+//     address (a hostname is never handed to SOCKS, so the server side
+//     cannot be made to reach its own loopback or private networks);
+//   - wan: the subscription fetcher's resolver (1.1.1.1 over the WAN, outer
+//     mark).
 func routeDialer(route downloadRoute) (func(ctx context.Context, host, port string) (net.Conn, error), error) {
+	var lookup func(ctx context.Context, host string) ([]net.IP, error)
+	var dial func(ctx context.Context, address string) (net.Conn, error)
 	switch route.Path {
 	case "vpn-awg":
 		mark := contract.ChannelMark(contract.AWG) | contract.ClassMark(contract.General) | contract.ProbeMark
 		resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dnsbroker.DialMarked(ctx, network, "1.1.1.1:53", contract.ChannelMark(contract.AWG)|contract.ProbeMark, "flr_awg")
+			return dnsbroker.DialMarked(ctx, network, tunnelDNS, contract.ChannelMark(contract.AWG)|contract.ProbeMark, "flr_awg")
 		}}
-		return func(ctx context.Context, host, port string) (net.Conn, error) {
-			ip := net.ParseIP(host)
-			if ip == nil {
-				ips, err := resolver.LookupIP(ctx, "ip4", host)
-				if err != nil || len(ips) == 0 {
-					return nil, fmt.Errorf("DNS through the tunnel failed")
-				}
-				if ip = ips[0]; !publicIP(ip) {
-					return nil, fmt.Errorf("download name resolves to a non-public address")
-				}
-			}
-			return dnsbroker.DialMarked(ctx, "tcp", net.JoinHostPort(ip.String(), port), mark, "flr_awg")
-		}, nil
-	case "vpn-gecko", "vpn-vless":
-		proxy := "127.0.0.1:1081"
-		if route.Path == "vpn-vless" {
-			proxy = "127.0.0.1:1082"
+		lookup = func(ctx context.Context, host string) ([]net.IP, error) { return resolver.LookupIP(ctx, "ip4", host) }
+		dial = func(ctx context.Context, address string) (net.Conn, error) {
+			return dnsbroker.DialMarked(ctx, "tcp", address, mark, "flr_awg")
 		}
-		return func(ctx context.Context, host, port string) (net.Conn, error) {
-			return socks.DialContext(ctx, proxy, net.JoinHostPort(host, port))
-		}, nil
+	case "vpn-gecko", "vpn-vless":
+		proxy := socksProxies[route.Path]
+		// A stream connection makes the Go resolver use DNS over TCP.
+		resolver := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return socksDial(ctx, proxy, tunnelDNS)
+		}}
+		lookup = func(ctx context.Context, host string) ([]net.IP, error) { return resolver.LookupIP(ctx, "ip4", host) }
+		dial = func(ctx context.Context, address string) (net.Conn, error) { return socksDial(ctx, proxy, address) }
 	case "wan":
 		f := Fetcher{WAN: route.WAN}
-		return func(ctx context.Context, host, port string) (net.Conn, error) {
-			ips, err := f.resolve(ctx, host)
-			if err != nil {
-				return nil, err
-			}
-			return dnsbroker.DialMarked(ctx, "tcp", net.JoinHostPort(ips[0].String(), port), contract.OuterMark, route.WAN)
-		}, nil
+		lookup = f.resolve
+		dial = func(ctx context.Context, address string) (net.Conn, error) {
+			return dnsbroker.DialMarked(ctx, "tcp", address, contract.OuterMark, route.WAN)
+		}
+	default:
+		return nil, fmt.Errorf("no download route")
 	}
-	return nil, fmt.Errorf("no download route")
+	return func(ctx context.Context, host, port string) (net.Conn, error) {
+		ip := net.ParseIP(host)
+		if ip == nil {
+			ips, err := lookup(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return nil, fmt.Errorf("DNS for the download failed (%s)", route.Path)
+			}
+			ip = ips[0]
+		}
+		if ip = ip.To4(); ip == nil || !publicIP(ip) {
+			return nil, fmt.Errorf("download destination is not a public IPv4 address")
+		}
+		return dial(ctx, net.JoinHostPort(ip.String(), port))
+	}, nil
 }

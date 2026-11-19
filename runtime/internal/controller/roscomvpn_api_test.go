@@ -5,7 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +19,7 @@ import (
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
 	"github.com/MyHeartRaces/FLR/runtime/internal/control"
 	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
+	mdns "github.com/miekg/dns"
 )
 
 // Synthetic RoscomVPN profile and data files: example names and
@@ -352,5 +356,143 @@ func TestRoscomVPNImportOnlyFromTheAPI(t *testing.T) {
 	}
 	if n := strings.Count(string(raw), "roscomImport("); n != 1 {
 		t.Fatalf("policy_api.go must call roscomImport once (the API dispatch), found %d", n)
+	}
+}
+
+// Through a proxy channel the name is resolved through the tunnel (DNS over
+// TCP via the channel's SOCKS listener), checked as public IPv4, and only
+// the numeric address goes to SOCKS: the VPN server cannot be made to
+// reach its own loopback or private networks.
+func TestRoscomVPNSocksDownloadsResolveThroughTheTunnel(t *testing.T) {
+	answers := map[string]string{"private.example.": "127.0.0.1", "lan.example.": "192.168.1.1", "public.example.": "8.8.4.4"}
+	var mu sync.Mutex
+	var targets []string
+	oldDial, oldProxies := socksDial, socksProxies
+	t.Cleanup(func() { socksDial, socksProxies = oldDial, oldProxies })
+	socksProxies = map[string]string{"vpn-gecko": "proxy-gecko", "vpn-vless": "proxy-vless"}
+	socksDial = func(ctx context.Context, proxy, target string) (net.Conn, error) {
+		mu.Lock()
+		targets = append(targets, proxy+" "+target)
+		mu.Unlock()
+		if target != tunnelDNS {
+			return nil, fmt.Errorf("connect %s", target)
+		}
+		client, server := net.Pipe()
+		go serveTCPDNS(server, answers)
+		return client, nil
+	}
+	for _, path := range []string{"vpn-gecko", "vpn-vless"} {
+		dial, err := routeDialer(downloadRoute{Path: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		for _, host := range []string{"private.example", "lan.example", "127.0.0.1", "10.0.0.1"} {
+			mu.Lock()
+			targets = nil
+			mu.Unlock()
+			if _, err := dial(ctx, host, "443"); err == nil || !strings.Contains(err.Error(), "not a public IPv4") {
+				t.Errorf("%s %s: %v", path, host, err)
+			}
+			mu.Lock()
+			for _, target := range targets {
+				if !strings.HasSuffix(target, " "+tunnelDNS) {
+					t.Errorf("%s %s reached SOCKS target %s", path, host, target)
+				}
+			}
+			mu.Unlock()
+		}
+		mu.Lock()
+		targets = nil
+		mu.Unlock()
+		if _, err := dial(ctx, "public.example", "443"); err == nil || !strings.Contains(err.Error(), "connect 8.8.4.4:443") {
+			t.Errorf("%s public: %v", path, err)
+		}
+		mu.Lock()
+		want := socksProxies[path] + " 8.8.4.4:443"
+		if len(targets) == 0 || targets[len(targets)-1] != want {
+			t.Errorf("%s connected %v, want the numeric address %s", path, targets, want)
+		}
+		for _, target := range targets {
+			if strings.Contains(target, "public.example") {
+				t.Errorf("a hostname went to SOCKS: %s", target)
+			}
+		}
+		mu.Unlock()
+		cancel()
+	}
+}
+
+// serveTCPDNS answers A queries on one DNS-over-TCP stream.
+func serveTCPDNS(conn net.Conn, answers map[string]string) {
+	defer conn.Close()
+	for {
+		var head [2]byte
+		if _, err := io.ReadFull(conn, head[:]); err != nil {
+			return
+		}
+		msg := make([]byte, int(head[0])<<8|int(head[1]))
+		if _, err := io.ReadFull(conn, msg); err != nil {
+			return
+		}
+		q := new(mdns.Msg)
+		if q.Unpack(msg) != nil || len(q.Question) != 1 {
+			return
+		}
+		r := new(mdns.Msg)
+		r.SetReply(q)
+		name := strings.ToLower(q.Question[0].Name)
+		if ip, ok := answers[name]; ok && q.Question[0].Qtype == mdns.TypeA {
+			r.Answer = append(r.Answer, &mdns.A{Hdr: mdns.RR_Header{Name: q.Question[0].Name, Rrtype: mdns.TypeA, Class: mdns.ClassINET, Ttl: 60}, A: net.ParseIP(ip).To4()})
+		} else if !ok {
+			r.Rcode = mdns.RcodeNameError
+		}
+		out, err := r.Pack()
+		if err != nil {
+			return
+		}
+		if _, err := conn.Write(append([]byte{byte(len(out) >> 8), byte(len(out))}, out...)); err != nil {
+			return
+		}
+	}
+}
+
+// Published provenance (job status, result, policy.json) never carries a
+// query string, user information or fragment of the URLs.
+func TestRoscomVPNProvenanceDropsURLSecrets(t *testing.T) {
+	c, f := roscomAdmin(t)
+	profileURL := "https://profiles.example.com/DEFAULT.JSON?token=profilesecret"
+	f.files[profileURL] = []byte(strings.ReplaceAll(strings.ReplaceAll(synthProfile,
+		"https://cdn.example.com/geosite.dat", "https://cdn.example.com/geosite.dat?sig=sitesecret"),
+		"https://cdn.example.com/geoip.dat", "https://cdn.example.com/geoip.dat#ipsecret"))
+	f.files["https://cdn.example.com/geosite.dat?sig=sitesecret"] = f.files["https://cdn.example.com/geosite.dat"]
+	f.files["https://cdn.example.com/geoip.dat#ipsecret"] = f.files["https://cdn.example.com/geoip.dat"]
+	res := mustRouting(t, c, "routing-roscomvpn-import", map[string]any{"url": profileURL, "accepted": true})
+	if res["installed"] != true || res["source"] != "https://profiles.example.com/DEFAULT.JSON" || len(res["source_sha256"].(string)) != 64 {
+		t.Fatalf("result %v", res)
+	}
+	status, _ := json.Marshal(mustRouting(t, c, "routing-roscomvpn-status", nil))
+	policyJSON, err := os.ReadFile(filepath.Join(c.overlayDir(), "policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	overview, _ := json.Marshal(mustRouting(t, c, "routing-policy", nil))
+	for _, text := range []string{string(status), string(policyJSON), string(overview)} {
+		for _, secret := range []string{"profilesecret", "sitesecret", "ipsecret", "token=", "sig="} {
+			if strings.Contains(text, secret) {
+				t.Errorf("published %q: %.300s", secret, text)
+			}
+		}
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(policyJSON, &meta); err != nil {
+		t.Fatal(err)
+	}
+	if meta["geosite"] != "https://cdn.example.com/geosite.dat" || len(meta["geosite_sha256"].(string)) != 64 || len(meta["source_sha256"].(string)) != 64 {
+		t.Fatalf("policy.json provenance %v", meta)
+	}
+	// The full URLs were still used to fetch.
+	if strings.Join(f.calls, " ") != profileURL+" https://cdn.example.com/geosite.dat?sig=sitesecret https://cdn.example.com/geoip.dat#ipsecret" {
+		t.Fatalf("fetched %v", f.calls)
 	}
 }

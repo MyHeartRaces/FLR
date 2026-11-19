@@ -1,8 +1,10 @@
 package geodata
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -65,15 +67,17 @@ func convertSynthetic(t *testing.T, raw string) (*Overlay, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sites, err := ParseSites(syntheticSites())
+	sites, err := ParseSites(context.Background(), syntheticSites())
 	if err != nil {
 		t.Fatal(err)
 	}
-	ips, err := ParseIPs(syntheticIPs())
+	ips, err := ParseIPs(context.Background(), syntheticIPs())
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := Convert(Input{Profile: p, Sites: sites, IPs: ips, ProfileSource: "https://profiles.example.com/DEFAULT.JSON", ImportedAt: time.Unix(1795000000, 0),
+	o, err := Convert(context.Background(), Input{Profile: p, Sites: sites, IPs: ips, ImportedAt: time.Unix(1795000000, 0),
+		ProfileSource: "https://user:secret1@profiles.example.com/DEFAULT.JSON?token=abc#frag", ProfileSHA256: strings.Repeat("a", 64),
+		GeositeSource: "https://cdn.example.com/geosite.dat?sig=xyz", GeositeSHA256: strings.Repeat("b", 64), GeoipSource: "https://cdn.example.com/geoip.dat", GeoipSHA256: strings.Repeat("c", 64),
 		LocalDomains: []policy.Entry{{Kind: "domain", Value: "localhost"}, {Kind: "domain_suffix", Value: "lan"}},
 		LocalIPs:     []policy.Entry{{Kind: "ip_cidr", Value: "10.0.0.0/8"}, {Kind: "ip_cidr", Value: "fe80::/10"}}})
 	if err != nil {
@@ -183,7 +187,7 @@ func TestConvertMapsProfileOntoFLRRulesets(t *testing.T) {
 	for _, want := range []struct {
 		field string
 		count int
-	}{{"BlockSites", 2}, {"DnsHosts", 2}, {"DNS servers", 3}, {"DomainStrategy", 1}} {
+	}{{"BlockSites", 2}, {"DnsHosts", 2}, {"DNS", 3}, {"DomainStrategy", 1}} {
 		if is := issue(r.NotApplied, want.field, ""); is == nil || is.Count != want.count {
 			t.Errorf("not applied %s: %+v", want.field, is)
 		}
@@ -203,9 +207,31 @@ func TestConvertMapsProfileOntoFLRRulesets(t *testing.T) {
 		meta["geosite"] != "https://cdn.example.com/geosite.dat" || meta["profile_last_updated"] != "2026-11-18T11:34:04Z" || meta["imported_at"] != "2026-11-18T11:06:40Z" {
 		t.Errorf("policy.json %v", meta)
 	}
+	if meta["source_sha256"] != strings.Repeat("a", 64) || meta["geosite_sha256"] != strings.Repeat("b", 64) || meta["geoip"] != "https://cdn.example.com/geoip.dat" {
+		t.Errorf("provenance %v", meta)
+	}
+	for _, secret := range []string{"secret1", "token", "abc", "frag", "sig=", "xyz", "?"} {
+		if strings.Contains(string(o.Policy), secret) {
+			t.Errorf("policy.json keeps %q: %s", secret, o.Policy)
+		}
+	}
 	info, err := policy.Inspect(dir)
 	if err != nil || info.Meta["status"] != PolicyStatus {
 		t.Fatalf("inspect: %v %v", info.Meta, err)
+	}
+	// Every issue and note carries a stable code with an English fallback.
+	for _, is := range append(append([]Issue{}, r.Skipped...), r.NotApplied...) {
+		if Reasons[is.Code] == "" || is.Reason == "" {
+			t.Errorf("issue without code or text: %+v", is)
+		}
+	}
+	for _, n := range r.Notes {
+		if Reasons[n.Code] == "" || n.Text == "" {
+			t.Errorf("note without code or text: %+v", n)
+		}
+	}
+	if is := issue(r.Skipped, "DirectSites", "punycode"); is == nil || is.Code != "name_not_punycode" {
+		t.Errorf("code %+v", is)
 	}
 }
 
@@ -237,7 +263,7 @@ func TestDeepLinksAndProfileValues(t *testing.T) {
 			t.Fatalf("profile %+v", p)
 		}
 	}
-	for _, bad := range []string{"", "vless://x", "happ://routing/onadd/!!!", "[1,2]"} {
+	for _, bad := range []string{"", "vless://x", "happ://routing/onadd/!!!", "[1,2]", "happ://routing/" + base64.StdEncoding.EncodeToString([]byte(plain))} {
 		if _, err := ProfileJSON([]byte(bad)); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
@@ -254,7 +280,7 @@ func TestDeepLinksAndProfileValues(t *testing.T) {
 		}
 	}
 	p, _ := ParseProfile([]byte(plain))
-	o, err := Convert(Input{Profile: p, ImportedAt: time.Now()})
+	o, err := Convert(context.Background(), Input{Profile: p, ImportedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +301,7 @@ func TestConvertWithoutDataSkipsCategories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	o, err := Convert(Input{Profile: p, ImportedAt: time.Now()})
+	o, err := Convert(context.Background(), Input{Profile: p, ImportedAt: time.Now()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,12 +329,12 @@ func TestConvertLimits(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := Convert(Input{Profile: p, ImportedAt: time.Now()}); err == nil || !strings.Contains(err.Error(), "too large") {
+		if _, err := Convert(context.Background(), Input{Profile: p, ImportedAt: time.Now()}); err == nil || !strings.Contains(err.Error(), "too large") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
 	p, _ := ParseProfile([]byte(`{"Name":"x","DirectSites":[` + entries(MaxKeywords, "keyword:k%d") + `]}`))
-	if _, err := Convert(Input{Profile: p, ImportedAt: time.Now()}); err != nil {
+	if _, err := Convert(context.Background(), Input{Profile: p, ImportedAt: time.Now()}); err != nil {
 		t.Errorf("at the keyword limit: %v", err)
 	}
 	// A ruleset above MaxRulesetEntries: one geoip category with too many
@@ -317,12 +343,155 @@ func TestConvertLimits(t *testing.T) {
 	for i := 0; i <= MaxRulesetEntries; i++ {
 		cidrs = append(cidrs, pbUint(pbBytes(nil, 1, []byte{10, byte(i >> 16), byte(i >> 8), byte(i)}), 2, 32))
 	}
-	ips, err := ParseIPs(list(geoip("BIG", false, cidrs...)))
+	ips, err := ParseIPs(context.Background(), list(geoip("BIG", false, cidrs...)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	p, _ = ParseProfile([]byte(`{"Name":"x","DirectIp":["geoip:big"]}`))
-	if _, err := Convert(Input{Profile: p, IPs: ips, ImportedAt: time.Now()}); err == nil || !strings.Contains(err.Error(), "roscom-direct-ips") {
+	if _, err := Convert(context.Background(), Input{Profile: p, IPs: ips, ImportedAt: time.Now()}); err == nil || !strings.Contains(err.Error(), "roscom-direct-ips") {
 		t.Errorf("ruleset limit: %v", err)
+	}
+}
+
+// Xray matches keyword:, bare entries and geosite Plain values as
+// substrings of the full name: their dots are literal.
+func TestKeywordsKeepTheirDots(t *testing.T) {
+	p, err := ParseProfile([]byte(`{"Name":"k","DirectSites":["keyword:.RU","geosite:kw","..","keyword:."]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sites, err := ParseSites(context.Background(), list(site("KW", dom(Plain, ".su"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := Convert(context.Background(), Input{Profile: p, Sites: sites, ImportedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol, err := policy.Load(writeOverlay(t, o))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]policy.Class{
+		"trust.example":   policy.General, // would match a dot-stripped "ru"
+		"sushi.example":   policy.General, // would match a dot-stripped "su"
+		"a.ru":            policy.Direct,
+		"shop.ru.example": policy.Direct,
+		"mail.su":         policy.Direct,
+	} {
+		if got, _ := pol.DomainDecision(name); got != want {
+			t.Errorf("%s: %s, want %s", name, got, want)
+		}
+	}
+	if got := o.Report.Rulesets["roscom-direct-domains"].Counts["domain_keyword"]; got != 2 {
+		t.Errorf("keywords %d, want 2", got)
+	}
+	if is := issue(o.Report.Skipped, "DirectSites", "empty domain"); is == nil || is.Count != 2 {
+		t.Errorf("dot-only keywords: %+v", o.Report.Skipped)
+	}
+}
+
+func TestDeepLinkPayloadWithSlash(t *testing.T) {
+	var body string
+	for i := 0; ; i++ {
+		body = fmt.Sprintf(`{"Name":"slash %d ???>>>","DirectSites":["domain:example.com"]}`, i)
+		if strings.Contains(base64.StdEncoding.EncodeToString([]byte(body)), "/") {
+			break
+		}
+		if i > 1000 {
+			t.Fatal("no payload with /")
+		}
+	}
+	std := base64.StdEncoding.EncodeToString([]byte(body))
+	for _, link := range []string{
+		"happ://routing/onadd/" + std,
+		"happ://routing/onadd/" + strings.TrimRight(std, "="),
+		"incy://routing/add/" + base64.URLEncoding.EncodeToString([]byte(body)) + "?from=app",
+		"happ://routing/onadd/" + std[:20] + "\n" + std[20:],
+	} {
+		got, err := ProfileJSON([]byte(link))
+		if err != nil || string(got) != body {
+			t.Fatalf("%q: %q %v", link, got, err)
+		}
+	}
+}
+
+// Category entries stream into the sets: 100k duplicates of one domain and
+// a repeated reference cost (almost) no allocations.
+func TestStreamingDedupDoesNotMaterialize(t *testing.T) {
+	doms := make([][]byte, 0, 100000)
+	for i := 0; i < 100000; i++ {
+		doms = append(doms, dom(RootDomain, "dup.example"))
+	}
+	sites, err := ParseSites(context.Background(), list(site("DUP", doms...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := ParseProfile([]byte(`{"Name":"d","DirectSites":["geosite:dup","geosite:DUP"],"ProxySites":["geosite:dup"]}`))
+	var o *Overlay
+	allocs := testing.AllocsPerRun(1, func() {
+		if o, err = Convert(context.Background(), Input{Profile: p, Sites: sites, ImportedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if allocs > 5000 {
+		t.Fatalf("%.0f allocations for 200k streamed duplicates", allocs)
+	}
+	if o.Report.Rulesets["roscom-direct-domains"].Total != 1 || o.Report.Rulesets["vpn-required"].Total != 1 {
+		t.Fatalf("dedup: %+v", o.Report.Rulesets)
+	}
+	// One walk per (list, category); the repeated reference is noted.
+	if len(o.Report.Categories) != 2 || o.Report.Categories[0].Entries != 100000 {
+		t.Fatalf("categories %+v", o.Report.Categories)
+	}
+	found := false
+	for _, n := range o.Report.Notes {
+		found = found || n.Code == "note_duplicate_refs" && n.Args[0] == "1"
+	}
+	if !found {
+		t.Fatalf("notes %+v", o.Report.Notes)
+	}
+}
+
+func TestBudgetsFailEarlyAndContextCancels(t *testing.T) {
+	oldExpanded, oldRuleset := maxExpandedEntries, maxRulesetEntries
+	t.Cleanup(func() { maxExpandedEntries, maxRulesetEntries = oldExpanded, oldRuleset })
+	var doms [][]byte
+	for i := 0; i < 5000; i++ {
+		doms = append(doms, dom(RootDomain, fmt.Sprintf("h%d.example", i)))
+	}
+	sites, err := ParseSites(context.Background(), list(site("BIG", doms...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := ParseProfile([]byte(`{"Name":"b","DirectSites":["geosite:big"]}`))
+	in := Input{Profile: p, Sites: sites, ImportedAt: time.Now()}
+	var le *LimitError
+	maxExpandedEntries = 1000
+	if _, err := Convert(context.Background(), in); !errors.As(err, &le) || !strings.Contains(err.Error(), "expand") {
+		t.Fatalf("expansion budget: %v", err)
+	}
+	maxExpandedEntries, maxRulesetEntries = oldExpanded, 100
+	if _, err := Convert(context.Background(), in); !errors.As(err, &le) || !strings.Contains(err.Error(), "roscom-direct-domains") {
+		t.Fatalf("ruleset budget: %v", err)
+	}
+	maxRulesetEntries = oldRuleset
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := Convert(ctx, in); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled conversion: %v", err)
+	}
+}
+
+func TestSourceURLDropsSecrets(t *testing.T) {
+	for raw, want := range map[string]string{
+		"https://user:secret1@cdn.example.com/a/geoip.dat?token=x#y": "https://cdn.example.com/a/geoip.dat",
+		"HTTPS://cdn.example.com:443/geosite.dat":                    "https://cdn.example.com:443/geosite.dat",
+		"uploaded file": "",
+		"":              "",
+	} {
+		if got := SourceURL(raw); got != want {
+			t.Errorf("%q: %q, want %q", raw, got, want)
+		}
 	}
 }

@@ -2055,3 +2055,119 @@ msgstr ""
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:92
 msgid "Import RoscomVPN profile"
 msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:54
+msgid "empty entry"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:55
+msgid "private destinations always stay local in FLR"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:56
+msgid "no geosite data"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:57
+msgid "no geoip data"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:58
+msgid "unreadable category: %s"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:59
+msgid "category not found in the data file"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:60
+msgid "external data files are not supported"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:61
+msgid "unsupported matcher prefix"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:62
+msgid "IPv6: FLR routes IPv4 only"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:63
+msgid "inverted geoip categories are not supported"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:64
+msgid "not an IP address, CIDR or geoip category"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:65
+msgid "regular expression longer than 1024 bytes"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:66
+msgid "invalid regular expression"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:67
+msgid "empty domain"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:68
+msgid "domain longer than 253 characters"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:69
+msgid "internationalized name not in punycode (xn--…)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:70
+msgid "invalid characters in domain"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:71
+msgid "FLR does not block destinations; they follow the other lists (unlisted: VPN)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:72
+msgid "FLR resolves every name through its own DNS broker; static host entries are not imported"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:73
+msgid "FLR uses its own resolvers: DoH inside the VPN, and the direct resolver of its settings for direct names"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:74
+msgid "FLR does not use fake DNS answers"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:75
+msgid "FLR always matches the name first and, for unlisted names, the resolved IPv4 address (the same as IPIfNonMatch)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:76
+msgid "FLR always gives the VPN lists precedence over the direct lists (block-proxy-direct)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:77
+msgid "FLR still sends unlisted destinations through the VPN"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:78
+msgid "%s bare entries were imported as substring (keyword) matches, as Xray matches them; write domain:example.com for a domain and its subdomains"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:79
+msgid "an address in ProxyIp goes through the VPN even when its name is in DirectSites (FLR matches address sets before name-derived direct sets)"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:80
+msgid "DirectSites and DirectIp apply in routing mode split only; full_domestic and full ignore them"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:81
+msgid "%s repeated category references were expanded once"
+msgstr ""
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:82
+msgid "attribute filters follow Xray: geosite:name@attr keeps domains with the attribute key attr; a leading ! is part of the key"
+msgstr ""

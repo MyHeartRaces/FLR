@@ -617,7 +617,8 @@ test('rpcd ACL needs no change: routing reads use the read method, routing write
 const WHITELIST='https://raw.githubusercontent.com/hydraponique/roscomvpn-routing/refs/heads/main/HAPP/WHITELIST.JSON';
 function roscomResult(installed){return {dry_run:!installed,installed,download_path:'vpn-awg',source:WHITELIST,backup_present:installed,apply:installed?{applied:true,source:'overlay',mode:'split'}:undefined,
  report:{name:'Synthetic <img src=x>',rulesets:{'roscom-direct-ips':{total:3,imported:3,counts:{ip_cidr:3}},'local-ips':{total:5,imported:1,counts:{ip_cidr:5}}},categories:[{list:'DirectIp',name:'geoip:direct',entries:3}],
-  skipped:[{field:'DirectIp',reason:'IPv6: FLR routes IPv4 only <b>x</b>',count:2,examples:['2001:db8::/32']}],not_applied:[{field:'BlockSites',reason:'FLR does not block destinations',count:3}],notes:['DirectSites and DirectIp apply in routing mode split only']}};}
+  skipped:[{field:'DirectIp',code:'ipv6',reason:'IPv6: FLR routes IPv4 only',count:2,examples:['2001:db8::/32']},{field:'DirectSites',code:'category_unreadable',args:['truncated <b>data</b>'],reason:'unreadable category: truncated <b>data</b>',count:1},{field:'ProxySites',code:'future_code',reason:'future English reason <img src=x>',count:1}],
+  not_applied:[{field:'BlockSites',code:'block_not_applied',reason:'FLR does not block destinations',count:3}],notes:[{code:'note_split_only',text:'DirectSites and DirectIp apply in routing mode split only'},{code:'note_bare_keywords',args:['4'],text:'4 bare entries'}]}};}
 test('RoscomVPN preview sends the preset URL as a dry run and shows the report as text',async()=>{
  const h=await routingHarness('transfer',true,r=>r.operation==='routing-roscomvpn-import'?{ok:true,data:{...roscomResult(false),pending:false}}:undefined);
  const url=h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url');
@@ -627,7 +628,11 @@ test('RoscomVPN preview sends the preset URL as a dry run and shows the report a
  assert.equal(h.browser.confirms.length,0,'a preview changes nothing and needs no confirmation');
  const text=h.text();
  assert.match(text,/Только предпросмотр: ничего не изменено/);assert.match(text,/через VPN \(AWG\)/);assert.match(text,/roscom-direct-ips/);
- assert.match(text,/DirectIp: записей 2 — IPv6/);assert.match(text,/BlockSites: записей 3/);assert.match(text,/geoip:direct · 3/);
+ assert.match(text,/DirectIp: записей 2 — IPv6: FLR маршрутизирует только IPv4/);assert.match(text,/BlockSites: записей 3 — FLR не блокирует назначения/);assert.match(text,/geoip:direct · 3/);
+ // Codes are translated with their arguments; an unknown code falls back to the router's English text.
+ assert.match(text,/категория не читается: truncated <b>data<\/b>/);assert.match(text,/future English reason/);
+ assert.match(text,/действуют только в режиме маршрутизации split/);assert.match(text,/Записей без префикса: 4;/);
+ assert.doesNotMatch(text,/apply in routing mode split only/,'a known note code must be shown translated');
  assert.equal(h.nodes().some(n=>n.parsedFrom),false,'report text parsed as HTML');
  await h.click('Профиль Default');assert.match(url.value,/HAPP\/DEFAULT\.JSON$/);
 });
@@ -678,4 +683,13 @@ test('RoscomVPN profile file goes through the chunked staging, then the import n
  assert.deepEqual(writes[0].routing,{size:data.length,sha256:sum});
  assert.deepEqual(writes[2].routing,{dry_run:true,staging_id:'fedcba9876543210'});
  input.files=[{name:'big.json',size:1024*1024+1,arrayBuffer:async()=>new ArrayBuffer(1)}];const count=h.requests().length;await h.click('Предпросмотр');assert.equal(h.requests().length,count,'oversized profile sent');
+});
+test('LuCI translates every RoscomVPN issue and note code the router emits, with the same English text',()=>{
+ const go=fs.readFileSync(path.join(root,'../../runtime/internal/geodata/roscomvpn.go'),'utf8');
+ const block=go.slice(go.indexOf('var Reasons = map[string]string{'));const body=block.slice(0,block.indexOf('\n}\n'));
+ const goCodes=Object.fromEntries([...body.matchAll(/^\s*"([a-z0-9_]+)":\s*"(.*)",\s*$/gm)].map(m=>[m[1],JSON.parse('"'+m[2]+'"')]));
+ const js=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/routing/transfer.js'),'utf8');
+ const luci=Object.fromEntries([...js.matchAll(/^\s+([a-z0-9_]+):_\('([^']*)'\)/gm)].map(m=>[m[1],m[2]]));
+ assert.ok(Object.keys(goCodes).length>=20);
+ for(const [code,text] of Object.entries(goCodes)){assert.equal(luci[code],text,code);assert.ok(RU[text],'missing Russian: '+code);}
 });
