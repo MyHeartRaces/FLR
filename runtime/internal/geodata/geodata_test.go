@@ -1,6 +1,8 @@
 package geodata
 
 import (
+	"context"
+	"errors"
 	"net/netip"
 	"strings"
 	"testing"
@@ -73,9 +75,28 @@ func list(entries ...[]byte) []byte {
 func values(ds []Domain) []string {
 	var out []string
 	for _, d := range ds {
-		out = append(out, d.Value)
+		out = append(out, string(d.Value))
 	}
 	return out
+}
+
+// lookup collects a category through Each, copying the values.
+func lookup(s *Sites, spec string) ([]Domain, bool, error) {
+	var out []Domain
+	ok, err := s.Each(context.Background(), spec, func(d Domain) error {
+		out = append(out, Domain{Type: d.Type, Value: append([]byte(nil), d.Value...)})
+		return nil
+	})
+	return out, ok, err
+}
+
+func lookupIPs(s *IPs, code string) ([]netip.Prefix, bool, bool, error) {
+	var out []netip.Prefix
+	reverse, ok, err := s.Each(context.Background(), code, func(p netip.Prefix) error {
+		out = append(out, p)
+		return nil
+	})
+	return out, reverse, ok, err
 }
 
 func TestSitesLookup(t *testing.T) {
@@ -88,37 +109,43 @@ func TestSitesLookup(t *testing.T) {
 			dom(RootDomain, "example.com"),
 			dom(Full, "www.example.net", "cn"),
 			dom(Plain, "tracker", "ads", "cn"),
+			dom(RootDomain, "bang.example", "!cn"),
 			dom(Regex, `^ad[0-9]+\.example\.org$`)), extra...),
 		site("example", dom(RootDomain, "duplicate.example")),
 		site("Other", dom(RootDomain, "other.example")),
 	)
-	s, err := ParseSites(data)
+	s, err := ParseSites(context.Background(), data)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s.Len() != 2 {
 		t.Fatalf("categories %d, want 2 (duplicate code: first wins)", s.Len())
 	}
-	got, ok, err := s.Lookup("example")
-	if err != nil || !ok || len(got) != 4 {
+	got, ok, err := lookup(s, "example")
+	if err != nil || !ok || len(got) != 5 {
 		t.Fatalf("lookup: %v %v %v", got, ok, err)
 	}
-	if got[0].Type != RootDomain || got[1].Type != Full || got[2].Type != Plain || got[3].Type != Regex {
+	if got[0].Type != RootDomain || got[1].Type != Full || got[2].Type != Plain || got[4].Type != Regex {
 		t.Fatalf("types: %+v", got)
 	}
-	if got, _, _ := s.Lookup("Example@cn"); strings.Join(values(got), ",") != "www.example.net,tracker" {
+	if got, _, _ := lookup(s, "Example@cn"); strings.Join(values(got), ",") != "www.example.net,tracker" {
 		t.Fatalf("@cn: %v", values(got))
 	}
-	if got, _, _ := s.Lookup("example@!cn"); strings.Join(values(got), ",") != "example.com,^ad[0-9]+\\.example\\.org$" {
-		t.Fatalf("@!cn: %v", values(got))
+	// Xray (common/geodata): "!" is part of the attribute key, not a
+	// negation, and every attribute must be present.
+	if got, _, _ := lookup(s, "example@!cn"); strings.Join(values(got), ",") != "bang.example" {
+		t.Fatalf("@!cn must select the literal key !cn: %v", values(got))
 	}
-	if got, _, _ := s.Lookup("example@cn@!ads"); strings.Join(values(got), ",") != "www.example.net" {
+	if got, _, _ := lookup(s, "example@cn@ADS"); strings.Join(values(got), ",") != "tracker" {
+		t.Fatalf("@cn@ads (conjunction, case-insensitive): %v", values(got))
+	}
+	if got, _, _ := lookup(s, "example@cn@!ads"); len(got) != 0 {
 		t.Fatalf("@cn@!ads: %v", values(got))
 	}
-	if _, ok, err := s.Lookup("missing"); ok || err != nil {
+	if _, ok, err := lookup(s, "missing"); ok || err != nil {
 		t.Fatalf("missing category: %v %v", ok, err)
 	}
-	if _, _, err := s.Lookup("example@"); err == nil {
+	if _, _, err := lookup(s, "example@"); err == nil {
 		t.Fatal("empty attribute accepted")
 	}
 }
@@ -129,11 +156,11 @@ func TestIPsLookup(t *testing.T) {
 		geoip("DIRECT", false, cidr("198.51.100.7/24"), cidr("2001:db8::/32"), mapped),
 		geoip("NOT", true, cidr("203.0.113.0/24")),
 	)
-	s, err := ParseIPs(data)
+	s, err := ParseIPs(context.Background(), data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, reverse, ok, err := s.Lookup("direct")
+	got, reverse, ok, err := lookupIPs(s, "direct")
 	if err != nil || !ok || reverse {
 		t.Fatalf("lookup: %v %v %v", ok, reverse, err)
 	}
@@ -146,10 +173,10 @@ func TestIPsLookup(t *testing.T) {
 			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
-	if _, reverse, ok, _ := s.Lookup("not"); !ok || !reverse {
+	if _, reverse, ok, _ := lookupIPs(s, "not"); !ok || !reverse {
 		t.Fatal("reverse_match lost")
 	}
-	if _, _, ok, _ := s.Lookup("missing"); ok {
+	if _, _, ok, _ := lookupIPs(s, "missing"); ok {
 		t.Fatal("missing category found")
 	}
 }
@@ -173,7 +200,7 @@ func TestMalformedData(t *testing.T) {
 		"truncated fixed":  {0x0d, 1, 2},
 	}
 	for name, data := range cases {
-		if _, err := ParseSites(data); err == nil {
+		if _, err := ParseSites(context.Background(), data); err == nil {
 			t.Errorf("geosite %s accepted", name)
 		}
 	}
@@ -185,11 +212,11 @@ func TestMalformedData(t *testing.T) {
 		"truncated":     list(geoip("X", false, cidr("192.0.2.0/24")))[:5],
 	}
 	for name, data := range ipCases {
-		if _, err := ParseIPs(data); err == nil {
+		if _, err := ParseIPs(context.Background(), data); err == nil {
 			t.Errorf("geoip %s accepted", name)
 		}
 	}
-	if _, err := ParseSites(good); err != nil {
+	if _, err := ParseSites(context.Background(), good); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -198,16 +225,46 @@ func TestDecoderCaps(t *testing.T) {
 	oldEntries, oldCategories := maxEntries, maxCategories
 	t.Cleanup(func() { maxEntries, maxCategories = oldEntries, oldCategories })
 	maxEntries, maxCategories = 3, 2
-	if _, err := ParseSites(list(site("A", dom(RootDomain, "a.example")), site("B", dom(RootDomain, "b.example")))); err != nil {
+	if _, err := ParseSites(context.Background(), list(site("A", dom(RootDomain, "a.example")), site("B", dom(RootDomain, "b.example")))); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ParseSites(list(site("A", dom(RootDomain, "a.example"), dom(RootDomain, "b.example")), site("B", dom(RootDomain, "c.example"), dom(RootDomain, "d.example")))); err == nil || !strings.Contains(err.Error(), "entries") {
+	if _, err := ParseSites(context.Background(), list(site("A", dom(RootDomain, "a.example"), dom(RootDomain, "b.example")), site("B", dom(RootDomain, "c.example"), dom(RootDomain, "d.example")))); err == nil || !strings.Contains(err.Error(), "entries") {
 		t.Fatalf("entry cap: %v", err)
 	}
-	if _, err := ParseSites(list(site("A"), site("B"), site("C"))); err == nil || !strings.Contains(err.Error(), "categories") {
+	if _, err := ParseSites(context.Background(), list(site("A"), site("B"), site("C"))); err == nil || !strings.Contains(err.Error(), "categories") {
 		t.Fatalf("category cap: %v", err)
 	}
-	if _, err := ParseIPs(list(geoip("A", false, cidr("192.0.2.0/24"), cidr("198.51.100.0/24"), cidr("203.0.113.0/24"), cidr("192.0.2.128/25")))); err == nil {
+	if _, err := ParseIPs(context.Background(), list(geoip("A", false, cidr("192.0.2.0/24"), cidr("198.51.100.0/24"), cidr("203.0.113.0/24"), cidr("192.0.2.128/25")))); err == nil {
 		t.Fatal("geoip entry cap not enforced")
+	}
+}
+
+func TestEachStopsOnCallbackErrorAndCancel(t *testing.T) {
+	var doms [][]byte
+	for i := 0; i < 3*ctxEvery; i++ {
+		doms = append(doms, dom(RootDomain, "a.example"))
+	}
+	s, err := ParseSites(context.Background(), list(site("BIG", doms...)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop := errors.New("stop")
+	n := 0
+	if _, err := s.Each(context.Background(), "big", func(Domain) error { n++; return stop }); err != stop || n != 1 {
+		t.Fatalf("callback error: %v after %d", err, n)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	n = 0
+	_, err = s.Each(ctx, "big", func(Domain) error {
+		if n++; n == 10 {
+			cancel()
+		}
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) || n > ctxEvery {
+		t.Fatalf("cancel: %v after %d entries", err, n)
+	}
+	if _, err := ParseSites(ctx, list(site("X", dom(RootDomain, "a.example")))); !errors.Is(err, context.Canceled) {
+		t.Fatalf("parse with a cancelled context: %v", err)
 	}
 }

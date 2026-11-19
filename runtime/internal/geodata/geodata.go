@@ -19,6 +19,8 @@
 package geodata
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -41,6 +43,9 @@ const (
 // maxEntries and maxCategories are the caps in force (lowered in tests).
 var maxEntries, maxCategories = MaxEntries, MaxCategories
 
+// ctxEvery is how many entries a walk handles between context checks.
+const ctxEvery = 4096
+
 // DomainType is the geosite match kind.
 type DomainType int
 
@@ -51,11 +56,12 @@ const (
 	Full       DomainType = 3 // exactly this name
 )
 
-// Domain is one geosite entry.
+// Domain is one geosite entry as Sites.Each hands it over. Value aliases
+// the file data and is valid only during the callback: nothing is copied
+// unless the caller keeps it.
 type Domain struct {
 	Type  DomainType
-	Value string
-	Attrs []string
+	Value []byte
 }
 
 var errTruncated = errors.New("truncated data")
@@ -140,9 +146,9 @@ type category struct {
 }
 
 // index walks a GeoSiteList or GeoIPList, validates every entry with check
-// and returns the categories by upper-case code. The first of duplicate
-// codes wins, as in Xray.
-func index(data []byte, kind string, check func(raw []byte, entries *int) error) (map[string]category, error) {
+// (which allocates nothing per entry) and returns the categories by
+// upper-case code. The first of duplicate codes wins, as in Xray.
+func index(ctx context.Context, data []byte, kind string, check func(raw []byte, entries *int) error) (map[string]category, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("%s: empty file", kind)
 	}
@@ -150,6 +156,9 @@ func index(data []byte, kind string, check func(raw []byte, entries *int) error)
 	w := wire{b: data}
 	entries, count := 0, 0
 	for w.more() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		num, typ, _, raw, err := w.field()
 		if err != nil {
 			return nil, fmt.Errorf("%s: %v", kind, err)
@@ -197,14 +206,21 @@ func short(s string) string {
 	return s
 }
 
-// Sites is a parsed geosite.dat. Categories are decoded on lookup.
+func checkText(b []byte, what string) error {
+	if len(b) > MaxValueBytes || !utf8.Valid(b) {
+		return fmt.Errorf("invalid %s", what)
+	}
+	return nil
+}
+
+// Sites is a parsed geosite.dat. Categories are walked on demand.
 type Sites struct{ cats map[string]category }
 
 // ParseSites validates a geosite.dat file and indexes its categories.
-func ParseSites(data []byte) (*Sites, error) {
-	cats, err := index(data, "geosite", func(raw []byte, entries *int) error {
-		_, err := decodeSite(raw, entries, false)
-		return err
+func ParseSites(ctx context.Context, data []byte) (*Sites, error) {
+	cats, err := index(ctx, data, "geosite", func(raw []byte, entries *int) error {
+		var keys [MaxAttributes][]byte
+		return walkSite(nil, raw, entries, keys[:0], nil)
 	})
 	if err != nil {
 		return nil, err
@@ -215,135 +231,136 @@ func ParseSites(data []byte) (*Sites, error) {
 // Len is the number of categories.
 func (s *Sites) Len() int { return len(s.cats) }
 
-// decodeSite decodes (collect) or only validates the domains of a GeoSite.
-func decodeSite(raw []byte, entries *int, collect bool) ([]Domain, error) {
-	var out []Domain
+// walkSite validates the domains of a GeoSite message and hands each to
+// visit (nil: validate only) with its attribute keys. keys is scratch space
+// with capacity MaxAttributes; nothing is allocated per domain.
+func walkSite(ctx context.Context, raw []byte, entries *int, keys [][]byte, visit func(Domain, [][]byte) error) error {
 	w := wire{b: raw}
+	n := 0
 	for w.more() {
 		num, typ, _, data, err := w.field()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if num != 2 || typ != 2 {
 			continue
 		}
 		if *entries++; *entries > maxEntries {
-			return nil, fmt.Errorf("more than %d entries", maxEntries)
+			return fmt.Errorf("more than %d entries", maxEntries)
+		}
+		if n++; ctx != nil && n%ctxEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		d := Domain{}
+		keys = keys[:0]
 		valueSeen := false
 		dw := wire{b: data}
 		for dw.more() {
-			n, t, v, b, err := dw.field()
+			fn, ft, v, b, err := dw.field()
 			if err != nil {
-				return nil, err
+				return err
 			}
 			switch {
-			case n == 1 && t == 0:
+			case fn == 1 && ft == 0:
 				if v > uint64(Full) {
-					return nil, fmt.Errorf("unknown domain type %d", v)
+					return fmt.Errorf("unknown domain type %d", v)
 				}
 				d.Type = DomainType(v)
-			case n == 2 && t == 2:
-				if d.Value, err = text(b, "domain value"); err != nil {
-					return nil, err
+			case fn == 2 && ft == 2:
+				if err := checkText(b, "domain value"); err != nil {
+					return err
 				}
-				valueSeen = true
-			case n == 3 && t == 2:
-				if len(d.Attrs) >= MaxAttributes {
-					return nil, fmt.Errorf("more than %d attributes", MaxAttributes)
+				d.Value, valueSeen = b, true
+			case fn == 3 && ft == 2:
+				if len(keys) >= MaxAttributes {
+					return fmt.Errorf("more than %d attributes", MaxAttributes)
 				}
 				aw := wire{b: b}
-				key := ""
+				var key []byte
 				for aw.more() {
 					an, at, _, ab, err := aw.field()
 					if err != nil {
-						return nil, err
+						return err
 					}
 					if an == 1 && at == 2 {
-						if key, err = text(ab, "attribute"); err != nil {
-							return nil, err
+						if err := checkText(ab, "attribute"); err != nil {
+							return err
 						}
+						key = ab
 					}
 				}
-				if key != "" && collect {
-					d.Attrs = append(d.Attrs, strings.ToLower(key))
+				if len(key) > 0 {
+					keys = append(keys, key)
 				}
 			}
 		}
-		if !valueSeen || d.Value == "" {
-			return nil, fmt.Errorf("domain without value")
+		if !valueSeen || len(d.Value) == 0 {
+			return fmt.Errorf("domain without value")
 		}
-		if collect {
-			out = append(out, d)
+		if visit != nil {
+			if err := visit(d, keys); err != nil {
+				return err
+			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
-// Lookup returns the domains of a category spec "name[@attr][@!attr]…":
-// the name compares case-insensitively; every "@attr" keeps only domains
-// carrying that attribute and every "@!attr" drops domains carrying it.
-// ok is false when the category does not exist.
-func (s *Sites) Lookup(spec string) (domains []Domain, ok bool, err error) {
+// Each hands fn every domain of a category spec "name[@attr]…", as Xray's
+// geosite loader reads it: the name compares case-insensitively, and every
+// "@attr" keeps only domains carrying the attribute key attr (compared
+// case-insensitively; a leading "!" is part of the key, as in Xray). found
+// is false when the category does not exist. ctx is checked while walking.
+func (s *Sites) Each(ctx context.Context, spec string, fn func(Domain) error) (found bool, err error) {
 	parts := strings.Split(spec, "@")
 	name := strings.TrimSpace(parts[0])
 	if name == "" {
-		return nil, false, fmt.Errorf("empty geosite category")
+		return false, fmt.Errorf("empty geosite category")
 	}
-	type filter struct {
-		key  string
-		want bool
-	}
-	var filters []filter
+	var filters [][]byte
 	for _, p := range parts[1:] {
-		p = strings.ToLower(strings.TrimSpace(p))
-		want := !strings.HasPrefix(p, "!")
-		p = strings.TrimPrefix(p, "!")
+		p = strings.TrimSpace(p)
 		if p == "" {
-			return nil, true, fmt.Errorf("empty geosite attribute in %s", short(spec))
+			return true, fmt.Errorf("empty geosite attribute in %s", short(spec))
 		}
-		filters = append(filters, filter{p, want})
+		filters = append(filters, []byte(p))
 	}
-	cat, found := s.cats[strings.ToUpper(name)]
-	if !found {
-		return nil, false, nil
+	cat, ok := s.cats[strings.ToUpper(name)]
+	if !ok {
+		return false, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var buf [MaxAttributes][]byte
 	n := 0
-	all, err := decodeSite(cat.raw, &n, true)
-	if err != nil {
-		return nil, true, err
-	}
-	for _, d := range all {
-		keep := true
+	err = walkSite(ctx, cat.raw, &n, buf[:0], func(d Domain, keys [][]byte) error {
 		for _, f := range filters {
 			has := false
-			for _, a := range d.Attrs {
-				if a == f.key {
+			for _, k := range keys {
+				if bytes.EqualFold(k, f) {
 					has = true
 					break
 				}
 			}
-			if has != f.want {
-				keep = false
-				break
+			if !has {
+				return nil
 			}
 		}
-		if keep {
-			domains = append(domains, d)
-		}
-	}
-	return domains, true, nil
+		return fn(d)
+	})
+	return true, err
 }
 
 // IPs is a parsed geoip.dat.
 type IPs struct{ cats map[string]category }
 
 // ParseIPs validates a geoip.dat file and indexes its categories.
-func ParseIPs(data []byte) (*IPs, error) {
-	cats, err := index(data, "geoip", func(raw []byte, entries *int) error {
-		_, _, err := decodeIP(raw, entries, false)
-		return err
+func ParseIPs(ctx context.Context, data []byte) (*IPs, error) {
+	cats, err := index(ctx, data, "geoip", func(raw []byte, entries *int) error {
+		return walkIP(nil, raw, entries, nil)
 	})
 	if err != nil {
 		return nil, err
@@ -354,70 +371,97 @@ func ParseIPs(data []byte) (*IPs, error) {
 // Len is the number of categories.
 func (s *IPs) Len() int { return len(s.cats) }
 
-// decodeIP decodes (collect) or only validates the CIDRs of a GeoIP.
-func decodeIP(raw []byte, entries *int, collect bool) ([]netip.Prefix, bool, error) {
-	var out []netip.Prefix
+// reverseMatch reads reverse_match of a GeoIP message without its CIDRs.
+func reverseMatch(raw []byte) (bool, error) {
 	reverse := false
 	w := wire{b: raw}
 	for w.more() {
-		num, typ, v, data, err := w.field()
+		num, typ, v, _, err := w.field()
 		if err != nil {
-			return nil, false, err
+			return false, err
 		}
-		switch {
-		case num == 3 && typ == 0:
+		if num == 3 && typ == 0 {
 			reverse = v != 0
-		case num == 2 && typ == 2:
-			if *entries++; *entries > maxEntries {
-				return nil, false, fmt.Errorf("more than %d entries", maxEntries)
-			}
-			var ip []byte
-			var bits uint64
-			ipSeen := false
-			cw := wire{b: data}
-			for cw.more() {
-				n, t, cv, cb, err := cw.field()
-				if err != nil {
-					return nil, false, err
-				}
-				switch {
-				case n == 1 && t == 2:
-					ip, ipSeen = cb, true
-				case n == 2 && t == 0:
-					bits = cv
-				}
-			}
-			addr, ok := netip.AddrFromSlice(ip)
-			if !ipSeen || !ok {
-				return nil, false, fmt.Errorf("CIDR address must be 4 or 16 bytes")
-			}
-			if bits > uint64(addr.BitLen()) {
-				return nil, false, fmt.Errorf("CIDR prefix out of range")
-			}
-			if addr.Is4In6() && bits >= 96 {
-				addr, bits = addr.Unmap(), bits-96
-			}
-			prefix, err := addr.Prefix(int(bits))
-			if err != nil {
-				return nil, false, err
-			}
-			if collect {
-				out = append(out, prefix)
-			}
 		}
 	}
-	return out, reverse, nil
+	return reverse, nil
 }
 
-// Lookup returns the CIDRs of a category (case-insensitive) and whether the
-// category is marked reverse_match (it then means every address outside
-// them). ok is false when the category does not exist.
-func (s *IPs) Lookup(code string) (prefixes []netip.Prefix, reverse, ok bool, err error) {
-	cat, found := s.cats[strings.ToUpper(strings.TrimSpace(code))]
-	if !found {
-		return nil, false, false, nil
+// walkIP validates the CIDRs of a GeoIP message and hands each to visit
+// (nil: validate only).
+func walkIP(ctx context.Context, raw []byte, entries *int, visit func(netip.Prefix) error) error {
+	w := wire{b: raw}
+	n := 0
+	for w.more() {
+		num, typ, _, data, err := w.field()
+		if err != nil {
+			return err
+		}
+		if num != 2 || typ != 2 {
+			continue
+		}
+		if *entries++; *entries > maxEntries {
+			return fmt.Errorf("more than %d entries", maxEntries)
+		}
+		if n++; ctx != nil && n%ctxEvery == 0 {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		var ip []byte
+		var bits uint64
+		ipSeen := false
+		cw := wire{b: data}
+		for cw.more() {
+			cn, ct, cv, cb, err := cw.field()
+			if err != nil {
+				return err
+			}
+			switch {
+			case cn == 1 && ct == 2:
+				ip, ipSeen = cb, true
+			case cn == 2 && ct == 0:
+				bits = cv
+			}
+		}
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ipSeen || !ok {
+			return fmt.Errorf("CIDR address must be 4 or 16 bytes")
+		}
+		if bits > uint64(addr.BitLen()) {
+			return fmt.Errorf("CIDR prefix out of range")
+		}
+		if addr.Is4In6() && bits >= 96 {
+			addr, bits = addr.Unmap(), bits-96
+		}
+		prefix, err := addr.Prefix(int(bits))
+		if err != nil {
+			return err
+		}
+		if visit != nil {
+			if err := visit(prefix); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Each hands fn every CIDR of a category (case-insensitive). A category
+// marked reverse_match (every address outside its CIDRs) is reported with
+// reverse true and not walked. found is false when the category does not
+// exist. ctx is checked while walking.
+func (s *IPs) Each(ctx context.Context, code string, fn func(netip.Prefix) error) (reverse, found bool, err error) {
+	cat, ok := s.cats[strings.ToUpper(strings.TrimSpace(code))]
+	if !ok {
+		return false, false, nil
+	}
+	if reverse, err = reverseMatch(cat.raw); err != nil || reverse {
+		return reverse, true, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	n := 0
-	prefixes, reverse, err = decodeIP(cat.raw, &n, true)
-	return prefixes, reverse, true, err
+	return false, true, walkIP(ctx, cat.raw, &n, fn)
 }

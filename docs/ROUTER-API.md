@@ -668,8 +668,20 @@ sysupgrade, shown, exported, reset and restored like any other).
 | `routing-roscomvpn-import` | write | exactly one of `url` (HTTPS, port 443, no credentials) or `staging_id` (a profile uploaded with `routing-import-begin`/`-chunk`, at most 1 MiB); `dry_run?`; `accepted:true` unless `dry_run` | controller running: `{pending:true, job, dry_run, download_path}`; offline: the result below with `pending:false` |
 | `routing-roscomvpn-status` | read | none | `{job:null}` or `{job:{id, pending, phase, dry_run, started, finished?, error?, result?}}` |
 
-`result` is `{dry_run, installed, download_path, source, data:{geosite?, geoip?:{url, bytes, sha256, categories}}, report, timings:{profile_ms?, geosite_ms?, geoip_ms?, convert_ms, install_ms?, total_ms}, apply?, backup_present?}`;
-`report` is `{name, rulesets:{<name>:{counts, total, imported}}, categories:[{list, name, entries}], skipped:[{field, reason, count, examples?}], not_applied:[…same…], notes:[…], total_imported}`.
+`result` is `{dry_run, installed, download_path, source, source_sha256, data:{geosite?, geoip?:{url, bytes, sha256, categories}}, report, timings:{profile_ms?, geosite_ms?, geoip_ms?, convert_ms, install_ms?, total_ms}, apply?, backup_present?}`;
+`report` is `{name, rulesets:{<name>:{counts, total, imported}}, categories:[{list, name, entries}], skipped:[{field, code, args?, reason, count, examples?}], not_applied:[…same…], notes:[{code, args?, text}], total_imported}`.
+`code` is stable (`geodata.Reasons` lists every code with its English text,
+`%s` for `args`); LuCI translates it and shows `reason`/`text`, the
+router's English text, for a code it does not know.
+
+**Provenance.** Full URLs are used only to fetch. Everything published or
+stored (`source`, `data.*.url`, the job status, and `source`, `geosite`,
+`geoip` in the installed policy.json) is scheme, host and path only,
+without user information, query or fragment, which may carry tokens; the
+SHA-256 of the profile and of each data file identifies the content
+(`source_sha256`, `geosite_sha256`, `geoip_sha256` in policy.json). Download
+errors name at most the host, never the URL.
+
 `phase` runs `queued`, `downloading profile`, `downloading geosite`,
 `downloading geoip`, `converting`, `installing`, then `done` or `failed`.
 One job at a time; a dry run (`Preview`) downloads and converts but changes
@@ -682,8 +694,9 @@ backup» brings it back), and the result is applied live to new connections.
 Custom rules are untouched. A failure at any step changes nothing.
 
 **Mapping** (list entries use Xray syntax; category names compare
-case-insensitively; `geosite:name@attr` keeps domains with the attribute,
-`@!attr` drops them):
+case-insensitively; as in Xray's geosite loader, every `@attr` of
+`geosite:name@attr@…` keeps only domains carrying that attribute key, and a
+leading `!` is part of the key, not a negation):
 
 | Profile | FLR |
 | --- | --- |
@@ -694,7 +707,7 @@ case-insensitively; `geosite:name@attr` keeps domains with the attribute,
 | `geosite:private` / `geoip:private` in the direct lists | added to `local-domains` / `local-ips`; the image's local defaults are kept |
 | geosite `RootDomain`, `domain:x` | `domain_suffix` |
 | geosite `Full`, `full:x` | `domain` (exact) |
-| geosite `Plain`, `keyword:x`, a bare entry | `domain_keyword` (substring: Xray matches a bare entry as a substring) |
+| geosite `Plain`, `keyword:x`, a bare entry | `domain_keyword`: a substring of the full name, as in Xray (a bare entry too); dots stay literal, so `keyword:.ru` matches `a.ru` but not `trust.example` |
 | geosite `Regex`, `regexp:x` | `domain_regex` (Go RE2, the engine Xray uses) |
 | IP, CIDR | `ip_cidr` |
 
@@ -717,9 +730,13 @@ its name is in `DirectSites`.
 (redirects must stay HTTPS on port 443, at most five; TLS verifies the host;
 literal and resolved addresses must be public IPv4). While the VPN runs they
 go through its active channel only: AWG bound to `flr_awg` with DNS through
-the tunnel (the engine updater's path), Hysteria2 and VLESS through their
-local SOCKS listener; if the VPN runs with no channel up the import is
-refused rather than sent through the ISP. The published files are on
+the tunnel (the engine updater's path); Hysteria2 and VLESS resolve the name
+with DNS over TCP to 1.1.1.1 through their local SOCKS listener and then
+connect through it to the checked numeric address, so a hostname never
+reaches SOCKS and the VPN server cannot be made to fetch from its own
+loopback or private networks (redirects take the same path; TLS still
+verifies the URL's host name). If the VPN runs with no channel up the import
+is refused rather than sent through the ISP. The published files are on
 jsDelivr and GitHub, which Russian ISPs often block, and the ISP should not
 see the request. Without a running VPN (first setup, VPN off, offline CLI)
 they go through the WAN like a subscription download (1.1.1.1 over the WAN).
@@ -732,7 +749,12 @@ largest list the published profiles produce); 250000 entries per ruleset,
 checks those one by one for every new name); the converted policy must fit
 the 16 MiB export bundle together with the largest custom rules list. The
 decoder checks every varint and length and caps categories (65536) and
-entries (8 Mi) per file. Timeouts: profile 20 s, each data file 90 s, the
+entries (8 Mi) per file. Conversion streams category entries straight into
+per-kind sets without copying them (a duplicate costs no allocation), walks
+a category once per list even when the profile names it repeatedly, enforces
+the limits above and a budget of 4 Mi walked entries as entries arrive (so an
+oversized profile fails early), and checks the job's context while walking,
+so a stopping controller or the job timeout ends it promptly. Timeouts: profile 20 s, each data file 90 s, the
 whole job 4 minutes.
 
 **Locking.** With the controller running the import is a background job:

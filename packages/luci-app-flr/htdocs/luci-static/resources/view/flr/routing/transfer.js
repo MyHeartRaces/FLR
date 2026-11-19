@@ -48,9 +48,42 @@ return view.extend({
   var roscomState=E('p',{class:'flr-muted','data-progress':'roscomvpn'}),roscomReport=E('div',{'data-report':'roscomvpn'});
   function phaseText(phase){return {queued:_('Waiting to start…'),'downloading profile':_('Downloading the profile…'),'downloading geosite':_('Downloading geosite…'),'downloading geoip':_('Downloading geoip…'),converting:_('Converting…'),installing:_('Installing…')}[phase] || String(phase || '');}
   function pathText(path){return {'vpn-awg':_('through the VPN (AWG)'),'vpn-gecko':_('through the VPN (Hysteria2)'),'vpn-vless':_('through the VPN (VLESS)'),wan:_('through the ISP (WAN)')}[path] || String(path || '');}
+  // Issue and note codes from the router (geodata.Reasons): translated here,
+  // the router's English text is the fallback for codes this page predates.
+  var reasonTexts={
+   empty_entry:_('empty entry'),
+   private_in_proxy:_('private destinations always stay local in FLR'),
+   no_geosite_data:_('no geosite data'),
+   no_geoip_data:_('no geoip data'),
+   category_unreadable:_('unreadable category: %s'),
+   category_missing:_('category not found in the data file'),
+   ext_unsupported:_('external data files are not supported'),
+   prefix_unsupported:_('unsupported matcher prefix'),
+   ipv6:_('IPv6: FLR routes IPv4 only'),
+   geoip_inverted:_('inverted geoip categories are not supported'),
+   not_ip:_('not an IP address, CIDR or geoip category'),
+   regex_too_long:_('regular expression longer than 1024 bytes'),
+   regex_invalid:_('invalid regular expression'),
+   name_empty:_('empty domain'),
+   name_too_long:_('domain longer than 253 characters'),
+   name_not_punycode:_('internationalized name not in punycode (xn--…)'),
+   name_invalid:_('invalid characters in domain'),
+   block_not_applied:_('FLR does not block destinations; they follow the other lists (unlisted: VPN)'),
+   dns_hosts:_('FLR resolves every name through its own DNS broker; static host entries are not imported'),
+   dns_servers:_('FLR uses its own resolvers: DoH inside the VPN, and the direct resolver of its settings for direct names'),
+   fake_dns:_('FLR does not use fake DNS answers'),
+   domain_strategy:_('FLR always matches the name first and, for unlisted names, the resolved IPv4 address (the same as IPIfNonMatch)'),
+   route_order:_('FLR always gives the VPN lists precedence over the direct lists (block-proxy-direct)'),
+   global_proxy:_('FLR still sends unlisted destinations through the VPN'),
+   note_bare_keywords:_('%s bare entries were imported as substring (keyword) matches, as Xray matches them; write domain:example.com for a domain and its subdomains'),
+   note_proxyip_wins:_('an address in ProxyIp goes through the VPN even when its name is in DirectSites (FLR matches address sets before name-derived direct sets)'),
+   note_split_only:_('DirectSites and DirectIp apply in routing mode split only; full_domestic and full ignore them'),
+   note_duplicate_refs:_('%s repeated category references were expanded once'),
+   note_attribute_filter:_('attribute filters follow Xray: geosite:name@attr keeps domains with the attribute key attr; a leading ! is part of the key')};
+  function coded(item,fallback){var t=reasonTexts[item && item.code],args=Array.isArray(item && item.args)?item.args.map(String):[];return t?t.format.apply(t,args):String(fallback || '');}
   function issues(title,list){
    if(!Array.isArray(list) || !list.length)return [];
-   return [E('h4',{},[title]),E('ul',{},list.map(function(i){return E('li',{},[_('%s: %s entries — %s').format(String(i.field),String(i.count),String(i.reason))+(Array.isArray(i.examples) && i.examples.length?' ('+i.examples.map(String).join(', ')+')':'')]);}))];
+   return [E('h4',{},[title]),E('ul',{},list.map(function(i){return E('li',{},[_('%s: %s entries — %s').format(String(i.field),String(i.count),coded(i,i.reason))+(Array.isArray(i.examples) && i.examples.length?' ('+i.examples.map(String).join(', ')+')':'')]);}))];
   }
   function showReport(result){
    var r=result && result.report || {},rows=[];
@@ -61,7 +94,7 @@ return view.extend({
     E('table',{class:'table'},[E('tr',{},[E('th',{},[_('Ruleset')]),E('th',{},[_('Entries')]),E('th',{},[_('From the profile')])])].concat(rows))];
    if(Array.isArray(r.categories) && r.categories.length)parts.push(E('p',{},[_('Categories: %s').format(r.categories.map(function(c){return String(c.name)+' · '+String(c.entries);}).join(', '))]));
    parts=parts.concat(issues(_('Skipped entries'),r.skipped),issues(_('Not applied by FLR'),r.not_applied));
-   if(Array.isArray(r.notes) && r.notes.length)parts.push(E('h4',{},[_('Notes')]),E('ul',{},r.notes.map(function(n){return E('li',{},[String(n)]);})));
+   if(Array.isArray(r.notes) && r.notes.length)parts.push(E('h4',{},[_('Notes')]),E('ul',{},r.notes.map(function(n){return E('li',{},[coded(n,n && n.text)]);})));
    roscomReport.replaceChildren.apply(roscomReport,parts);
   }
   async function roscomRun(dryRun){
