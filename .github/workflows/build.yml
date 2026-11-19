@@ -100,6 +100,8 @@ jobs:
           retention-days: 7
       - name: Check LuCI frontend
         run: node --test packages/luci-app-flr/tests/frontend.test.js
+      - name: Refuse private material in the public tree
+        run: python3 ci/check_public_tree.py
       - name: Check artifact guards
         run: python3 -m unittest discover -s tests -v
       - name: Build AWG packages and GL-MT6000 sysupgrade

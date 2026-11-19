@@ -6,7 +6,7 @@ return view.extend({
  render:function(settings) {
   var d=settings.direct_proxy || {bind:'',port:1080};
   return E('div',{class:'flr-page'},[
-   flr.style(),E('h2',{},_('Choosing VPN connections')),
+   flr.style(),flr.projectLink(),E('h2',{},_('Choosing VPN connections')),
    E('p',{},_('The "Proxy" page offers three modes: "Auto" follows the order of all protocols and connections; "Protocol only" chooses within one protocol; "Specific connection" keeps the manual choice even when it fails. The Backup/Main groups are your VPS labels, not hidden fallback rules.')),
    E('p',{},_('Priority is set separately for protocols and for the connections within each. AWG and HY2 can take any place. A new order takes effect at the next choice; a healthy connection stays until you explicitly ask for re-evaluation.')),
    E('p',{},_('AWG counts as degraded on sustained errors or slowdowns at both probe providers. A failure of one provider does not cause a switch. Returning needs fast successful probes at both providers for at least 60 s and an eligible priority. HTTPS/DNS timing is measured; it is no proof of throttling by the ISP.')),

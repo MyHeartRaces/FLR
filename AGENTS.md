@@ -20,6 +20,15 @@ with them.
    the owner's private repository and on the router under
    `/etc/flr-runtime`. Use documentation addresses (203.0.113.0/24,
    198.51.100.0/24) and `example.com` names in docs, tests and examples.
+   This also covers credentials (keys, passwords, tokens, share links such as
+   `vless://` or `hy2://`), the owner's custom rules and DNS filter, and any
+   build artifact made from private input. `ci/check_public_tree.py` enforces
+   it in CI (workflow "Public tree check", and before every image build) and
+   as a pre-commit hook: run `git config core.hooksPath ci/git-hooks` in every
+   clone. Live identifiers to refuse go one per line in the git-ignored
+   `.private-needles` file, never in the repository. Never bypass the hook
+   (`--no-verify`) or weaken the check to get a commit through. Images and
+   releases are published from this repository only.
 1. **The router is in daily use.** Do not flash, reconfigure, restart services
    on, or install anything on the router without the owner's explicit go-ahead
    for that step. Prepare and verify first, then ask. Preserve the WAN setup,

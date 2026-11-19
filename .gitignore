@@ -17,3 +17,11 @@ clients/
 
 # Files saved from Claude chats (may contain credentials)
 Claude outputs/
+
+# Private identifiers for ci/check_public_tree.py (never commit)
+.private-needles
+# Router-only private state
+custom-rules.json
+dnsfilter
+*.ovpn
+.env

@@ -1908,3 +1908,6 @@ msgstr ""
 #: root/usr/share/luci/menu.d/luci-app-flr.json
 msgid "qBittorrent and help"
 msgstr ""
+
+msgid "FLR source code, releases and documentation:"
+msgstr ""

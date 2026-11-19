@@ -116,7 +116,7 @@ test('all LuCI modules parse using native LuCI function wrapper',()=>{
 function viewModule(page,canWrite=true) {
  const source=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr',page+'.js'),'utf8');
  const E=luciElement;
- const flr={style:()=>E('link',{rel:'stylesheet',href:'/flr.css'}),group:api({ok:true,data:{}}).group,field:(name,input)=>E('label',{},[name,input]),action:(name,request)=>({tag:'action',name,request}),familyLabel:f=>f,read:async()=>({}),error:()=>{}};
+ const flr={style:()=>E('link',{rel:'stylesheet',href:'/flr.css'}),projectLink:()=>E('p',{class:'flr-project'},[]),group:api({ok:true,data:{}}).group,field:(name,input)=>E('label',{},[name,input]),action:(name,request)=>({tag:'action',name,request}),familyLabel:f=>f,read:async()=>({}),error:()=>{}};
  return run(source,{view:{extend:x=>x},E,flr,poll:{add:()=>{}},L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:{}},page);
 }
 function allNodes(node) {if(!node||typeof node!=='object')return [];return [node,...(Array.isArray(node.children)?node.children:[node.children]).flatMap(allNodes)];}
