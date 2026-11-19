@@ -29,6 +29,10 @@
 .flr-export { margin-top: 6px; }
 .flr-export:empty { display: none; }
 .flr-export textarea { font-family: monospace; font-size: 12px; word-break: break-all; }
+.flr-table { width: 100%; border-collapse: collapse; margin: 10px 0; }
+.flr-table th, .flr-table td { text-align: left; padding: 7px 10px; border-top: 1px solid rgba(127,127,127,.2); vertical-align: top; }
+.flr-value { overflow-wrap: anywhere; font-family: monospace; }
+.flr-page input[type=search] { width: 100%; max-width: 360px; box-sizing: border-box; }
 @media (max-width: 700px) {
  .flr-card { padding: 16px; }
  .flr-status-grid { grid-template-columns: 1fr; gap: 14px; }

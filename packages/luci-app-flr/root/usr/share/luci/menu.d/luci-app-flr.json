@@ -12,7 +12,7 @@
     }
   },
   "admin/flr/overview": {
-    "title": "Обзор",
+    "title": "Overview",
     "order": 10,
     "action": {
       "type": "view",
@@ -20,14 +20,14 @@
     }
   },
   "admin/flr/proxy": {
-    "title": "Прокси",
+    "title": "Proxy",
     "order": 20,
     "action": {
       "type": "firstchild"
     }
   },
   "admin/flr/proxy/status": {
-    "title": "Состояние",
+    "title": "Status",
     "order": 10,
     "action": {
       "type": "view",
@@ -35,7 +35,7 @@
     }
   },
   "admin/flr/proxy/connections": {
-    "title": "Подключения",
+    "title": "Connections",
     "order": 20,
     "action": {
       "type": "view",
@@ -43,7 +43,7 @@
     }
   },
   "admin/flr/proxy/order": {
-    "title": "Порядок",
+    "title": "Order",
     "order": 30,
     "action": {
       "type": "view",
@@ -51,15 +51,46 @@
     }
   },
   "admin/flr/proxy/import": {
-    "title": "Импорт",
+    "title": "Import",
     "order": 40,
     "action": {
       "type": "view",
       "path": "flr/proxy/import"
     }
   },
+  "admin/flr/routing": {
+    "title": "Routing",
+    "order": 25,
+    "action": {
+      "type": "firstchild"
+    }
+  },
+  "admin/flr/routing/overview": {
+    "title": "Overview",
+    "order": 10,
+    "action": {
+      "type": "view",
+      "path": "flr/routing/overview"
+    }
+  },
+  "admin/flr/routing/rules": {
+    "title": "Custom rules",
+    "order": 20,
+    "action": {
+      "type": "view",
+      "path": "flr/routing/rules"
+    }
+  },
+  "admin/flr/routing/transfer": {
+    "title": "Import & export",
+    "order": 30,
+    "action": {
+      "type": "view",
+      "path": "flr/routing/transfer"
+    }
+  },
   "admin/flr/settings": {
-    "title": "Настройки",
+    "title": "Settings",
     "order": 30,
     "action": {
       "type": "view",
@@ -67,7 +98,7 @@
     }
   },
   "admin/flr/help": {
-    "title": "qBittorrent и помощь",
+    "title": "qBittorrent and help",
     "order": 40,
     "action": {
       "type": "view",

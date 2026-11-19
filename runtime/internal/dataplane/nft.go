@@ -171,6 +171,10 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	staticSet("local4", "local-ips")
 	staticSet("broad_direct4", "roscom-direct-ips")
 	staticSet("service_static4", "vpn-services")
+	// The owner's custom address rules (policy/custom.go): disjoint sets
+	// matched before every list-derived set below.
+	staticSet("custom_vpn4", policy.CustomVPNSource)
+	staticSet("custom_direct4", policy.CustomDirectSource)
 	s.WriteString(" set profile_pending4 { type ipv4_addr; }\n")
 	for _, class := range []contract.Class{contract.Direct, contract.General, contract.Games} {
 		var ips []string
@@ -207,6 +211,10 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	assign := func(c contract.Class) {
 		fmt.Fprintf(&s, "ct mark set (ct mark & 0x007fffff) | %#08x goto selected\n", contract.ClassMark(c))
 	}
+	s.WriteString("  ip daddr @custom_vpn4 ")
+	assign(contract.General)
+	s.WriteString("  ip daddr @custom_direct4 ")
+	assign(contract.Direct)
 	s.WriteString("  ip daddr @required4 ")
 	assign(contract.General)
 	s.WriteString("  ip daddr @essential4 ")
@@ -267,11 +275,11 @@ func UpdateSelection(s contract.Selection, manualGames bool) error {
 }
 
 // StaticSetsBatch rewrites the policy's static CIDR sets of a running flr
-// table in one transaction (a routing mode change). Only new flows are
+// table in one transaction (a routing mode or custom rule change). Only new flows are
 // classified against them, so established flows keep their channel.
 func StaticSetsBatch(p *policy.Policy) string {
 	var s strings.Builder
-	for _, set := range []struct{ name, source string }{{"local4", "local-ips"}, {"broad_direct4", "roscom-direct-ips"}, {"service_static4", "vpn-services"}} {
+	for _, set := range []struct{ name, source string }{{"local4", "local-ips"}, {"broad_direct4", "roscom-direct-ips"}, {"service_static4", "vpn-services"}, {"custom_vpn4", policy.CustomVPNSource}, {"custom_direct4", policy.CustomDirectSource}} {
 		fmt.Fprintf(&s, "flush set inet flr %s\n", set.name)
 		var entries []string
 		for _, ip := range p.CIDRs(set.source) {

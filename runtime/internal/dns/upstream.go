@@ -1,9 +1,9 @@
 package dns
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
 	"github.com/MyHeartRaces/FLR/runtime/internal/socks"
@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -87,45 +88,98 @@ func Fallback(ctx context.Context, q *mdns.Msg, list []Exchange) (*mdns.Msg, err
 	}
 	return nil, last
 }
+
+// dohTransports keeps one HTTP transport per DoH upstream and path, so
+// queries reuse an open HTTP/2 connection instead of paying a TCP and TLS
+// handshake each. A path change (another VPN channel, or the WAN) uses
+// another key; idle connections close after dohIdle.
+var (
+	dohMu         sync.Mutex
+	dohTransports = map[string]*http.Transport{}
+)
+
+const dohIdle = 30 * time.Second
+
+type dialFunc func(ctx context.Context, target string) (net.Conn, error)
+
+func dohTransport(key, hostname string, dial dialFunc) *http.Transport {
+	dohMu.Lock()
+	defer dohMu.Unlock()
+	if t := dohTransports[key]; t != nil {
+		return t
+	}
+	t := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, MaxIdleConnsPerHost: 1, IdleConnTimeout: dohIdle, ResponseHeaderTimeout: 2 * time.Second, MaxResponseHeaderBytes: 16384}
+	t.DialContext = func(ctx context.Context, _, address string) (net.Conn, error) {
+		return dial(ctx, address)
+	}
+	dohTransports[key] = t
+	return t
+}
+
+// DoH resolves q over DNS-over-HTTPS through a VPN channel.
 func DoH(ctx context.Context, q *mdns.Msg, channel contract.Channel, ip, hostname string) (*mdns.Msg, error) {
 	if channel == contract.Down {
 		return nil, fmt.Errorf("VPN DNS unavailable")
 	}
-	transport := &http.Transport{Proxy: nil, TLSClientConfig: &tls.Config{ServerName: hostname, MinVersion: tls.VersionTLS12}, ForceAttemptHTTP2: true, DisableKeepAlives: true, ResponseHeaderTimeout: 2 * time.Second}
-	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-		target := net.JoinHostPort(ip, "443")
-		switch channel {
-		case contract.AWG:
+	var dial dialFunc
+	switch channel {
+	case contract.AWG:
+		dial = func(ctx context.Context, target string) (net.Conn, error) {
 			return DialMarked(ctx, "tcp", target, contract.ChannelMark(channel)|contract.ClassMark(contract.General), "flr_awg")
-		case contract.Gecko:
+		}
+	case contract.Gecko:
+		dial = func(ctx context.Context, target string) (net.Conn, error) {
 			return socks.DialContext(ctx, "127.0.0.1:1081", target)
-		case contract.VLESS:
+		}
+	case contract.VLESS:
+		dial = func(ctx context.Context, target string) (net.Conn, error) {
 			return socks.DialContext(ctx, "127.0.0.1:1082", target)
 		}
+	default:
 		return nil, fmt.Errorf("invalid DNS channel")
 	}
-	defer transport.CloseIdleConnections()
+	return dohExchange(ctx, q, fmt.Sprintf("vpn|%d|%s|%s", channel, ip, hostname), ip, hostname, dial)
+}
+
+// DoHDirect resolves q over DNS-over-HTTPS straight through the WAN, for
+// names that leave through the ISP: the ISP sees neither the names nor can
+// it rewrite the answers.
+func DoHDirect(ctx context.Context, q *mdns.Msg, ip, hostname string, mark uint32, device string) (*mdns.Msg, error) {
+	dial := func(ctx context.Context, target string) (net.Conn, error) {
+		return DialMarked(ctx, "tcp", target, mark, device)
+	}
+	return dohExchange(ctx, q, fmt.Sprintf("wan|%d|%s|%s|%s", mark, device, ip, hostname), ip, hostname, dial)
+}
+
+func dohExchange(ctx context.Context, q *mdns.Msg, key, ip, hostname string, dial dialFunc) (*mdns.Msg, error) {
+	target := net.JoinHostPort(ip, "443")
+	transport := dohTransport(key, hostname, func(ctx context.Context, _ string) (net.Conn, error) {
+		return dial(ctx, target)
+	})
 	b, e := q.Pack()
 	if e != nil {
 		return nil, e
 	}
-	request, e := http.NewRequestWithContext(ctx, "POST", "https://"+hostname+"/dns-query", bytes.NewReader(b))
+	// GET (RFC 8484) is idempotent, so a request on a connection that died
+	// while idle is retried once on a fresh connection.
+	request, e := http.NewRequestWithContext(ctx, "GET", "https://"+hostname+"/dns-query?dns="+base64.RawURLEncoding.EncodeToString(b), nil)
 	if e != nil {
 		return nil, e
 	}
-	request.Header.Set("Content-Type", "application/dns-message")
 	request.Header.Set("Accept", "application/dns-message")
 	client := &http.Client{Transport: transport, Timeout: 2 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return fmt.Errorf("DoH redirect rejected") }}
 	response, e := client.Do(request)
 	if e != nil {
+		transport.CloseIdleConnections()
 		return nil, e
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return nil, fmt.Errorf("DoH HTTP status%d", response.StatusCode)
+		return nil, fmt.Errorf("DoH HTTP status %d", response.StatusCode)
 	}
 	b, e = io.ReadAll(io.LimitReader(response.Body, 65536))
 	if e != nil {
+		transport.CloseIdleConnections()
 		return nil, e
 	}
 	if len(b) > 65535 {

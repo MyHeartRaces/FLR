@@ -267,6 +267,9 @@ func (c *Controller) HandleAPI(r control.APIRequest) (any, error) {
 	if r.Operation == "diagnostics" || r.Operation == "diagnostics-export" {
 		return c.diagnosticAPI(r)
 	}
+	if result, handled, err := c.handleRoutingAPI(r); handled {
+		return result, err
+	}
 	if c.settings.Version == 2 {
 		if result, handled, err := c.handleConnectionsAPI(r); handled {
 			return result, err

@@ -27,3 +27,16 @@ Each ruleset is `{"version":3,"rules":[{"domain":[…],"domain_suffix":[…],
 The controller uses the overlay when it loads cleanly and otherwise falls
 back to the image policy (all traffic through the VPN) and reports the
 overlay error. `/etc/flr-runtime/` is kept across sysupgrade.
+
+## Managing it from LuCI
+
+«FLR → Routing» shows which policy is in use, counts and pages through every
+ruleset, and holds the owner's **custom rules** (domains, IPv4 addresses,
+subnets and ranges sent through the VPN or directly through the ISP), stored
+only on the router in `/etc/flr-runtime/custom-rules.json`. Custom rules take
+precedence over the rulesets except local destinations. The same page exports
+the effective configuration (policy, rulesets and custom rules) as one JSON
+file, imports such a file as the overlay (the previous overlay is kept as
+`/etc/flr-runtime/policy.backup`), and resets to the image default. Changes
+apply to new connections without restarting the VPN. API and file formats:
+`docs/ROUTER-API.md`, "Routing policy API".

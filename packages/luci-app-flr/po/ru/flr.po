@@ -1,0 +1,1916 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: luci-app-flr\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language-Team: Russian\n"
+
+#: htdocs/luci-static/resources/flr.js:17
+msgid "The request exceeds the 64 KiB web interface limit. Use an HTTPS URL for a large subscription."
+msgstr "Запрос превышает лимит веб-интерфейса 64 КиБ. Для большой подписки используйте HTTPS URL."
+
+#: htdocs/luci-static/resources/flr.js:22 htdocs/luci-static/resources/flr.js:48 htdocs/luci-static/resources/flr.js:158 htdocs/luci-static/resources/flr.js:176
+msgid "FLR returned no valid reply. Check the service and retry."
+msgstr "FLR не вернул корректный ответ. Проверьте службу и повторите запрос."
+
+#: htdocs/luci-static/resources/flr.js:23
+msgid "The FLR operation failed."
+msgstr "Операция FLR не выполнена."
+
+#: htdocs/luci-static/resources/flr.js:60
+msgid "Choose a mode and an available protocol or connection."
+msgstr "Выберите режим и доступное значение протокола или подключения."
+
+#: htdocs/luci-static/resources/flr.js:63
+msgid "The order must list every protocol exactly once."
+msgstr "Порядок должен содержать каждый протокол один раз."
+
+#: htdocs/luci-static/resources/flr.js:65
+msgid "Invalid connection order."
+msgstr "Некорректный порядок подключений."
+
+#: htdocs/luci-static/resources/flr.js:65
+msgid "A connection appears twice in the order."
+msgstr "Подключение повторяется в порядке."
+
+#: htdocs/luci-static/resources/flr.js:73
+msgid "Group: at most 80 bytes of UTF-8, without line breaks, NUL or URLs."
+msgstr "Группа: не более 80 байт UTF-8, без переводов строк, NUL и URL."
+
+#: htdocs/luci-static/resources/flr.js:81
+msgid "Invalid diagnostics page."
+msgstr "Некорректная страница диагностики."
+
+#: htdocs/luci-static/resources/flr.js:83
+msgid "The history changed during the download; repeat the export."
+msgstr "История изменилась во время выгрузки; повторите экспорт."
+
+#: htdocs/luci-static/resources/flr.js:86
+msgid "Invalid diagnostics history boundary."
+msgstr "Некорректная граница истории диагностики."
+
+#: htdocs/luci-static/resources/flr.js:87
+msgid "The history lost records not yet downloaded; repeat the export."
+msgstr "История потеряла ещё не выгруженные записи; повторите экспорт."
+
+#: htdocs/luci-static/resources/flr.js:89
+msgid "Invalid diagnostics cursor."
+msgstr "Некорректный курсор диагностики."
+
+#: htdocs/luci-static/resources/flr.js:91
+msgid "The diagnostics history exceeds the 4 MiB limit."
+msgstr "История диагностики превышает лимит 4 МиБ."
+
+#: htdocs/luci-static/resources/flr.js:94
+msgid "The diagnostics download stalled; repeat the export."
+msgstr "Выгрузка диагностики остановилась; повторите экспорт."
+
+#: htdocs/luci-static/resources/flr.js:97
+msgid "Too many diagnostics pages."
+msgstr "Слишком много страниц диагностики."
+
+#: htdocs/luci-static/resources/flr.js:105
+msgid "Activation is waiting for the VPN to start. Check the status and LAN/WAN before confirming the rollback."
+msgstr "Активация ожидает запуска VPN. Проверьте состояние и LAN/WAN перед подтверждением отката."
+
+#: htdocs/luci-static/resources/flr.js:105
+msgid "The test has started. Wait for the result and for the connection to be restored."
+msgstr "Проверка запущена. Дождитесь результата и восстановления подключения."
+
+#: htdocs/luci-static/resources/flr.js:105
+msgid "Changes accepted."
+msgstr "Изменения приняты."
+
+#: htdocs/luci-static/resources/flr.js:124
+msgid "Protocol only · %s"
+msgstr "Только протокол · %s"
+
+#: htdocs/luci-static/resources/flr.js:125
+msgid "Specific connection · %s"
+msgstr "Конкретное подключение · %s"
+
+#: htdocs/luci-static/resources/flr.js:125
+msgid "connection missing"
+msgstr "подключение отсутствует"
+
+#: htdocs/luci-static/resources/flr.js:126
+msgid "Auto · configured fallback order"
+msgstr "Авто · заданный порядок fallback"
+
+#: htdocs/luci-static/resources/flr.js:141
+msgid "Settings changed. Refresh them before saving."
+msgstr "Настройки изменились. Обновите их перед сохранением."
+
+#: htdocs/luci-static/resources/flr.js:142
+msgid "Refresh settings"
+msgstr "Обновить настройки"
+
+#: htdocs/luci-static/resources/flr.js:146 htdocs/luci-static/resources/view/flr/routing/transfer.js:28
+msgid "Choose a file."
+msgstr "Выберите файл."
+
+#: htdocs/luci-static/resources/flr.js:147
+msgid "The file exceeds the allowed size."
+msgstr "Файл превышает допустимый размер."
+
+#: htdocs/luci-static/resources/flr.js:160 htdocs/luci-static/resources/flr.js:164 htdocs/luci-static/resources/flr.js:167
+msgid "The routing configuration changed during the export; start it again."
+msgstr "Конфигурация маршрутизации изменилась во время экспорта; начните его заново."
+
+#: htdocs/luci-static/resources/flr.js:169
+msgid "The export checksum does not match; start it again."
+msgstr "Контрольная сумма экспорта не совпадает; начните его заново."
+
+#: htdocs/luci-static/resources/flr.js:174 htdocs/luci-static/resources/view/flr/routing/transfer.js:29
+msgid "The file is empty or larger than 16 MiB."
+msgstr "Файл пуст или больше 16 МиБ."
+
+#: htdocs/luci-static/resources/flr.js:191
+msgid "Applied to new connections; existing connections keep their route."
+msgstr "Применено к новым соединениям; существующие соединения сохраняют свой маршрут."
+
+#: htdocs/luci-static/resources/flr.js:192
+msgid "Saved, not applied yet: %s"
+msgstr "Сохранено, но ещё не применено: %s"
+
+#: htdocs/luci-static/resources/view/flr/help.js:9
+msgid "Choosing VPN connections"
+msgstr "Выбор VPN-подключений"
+
+#: htdocs/luci-static/resources/view/flr/help.js:10
+msgid "The \"Proxy\" page offers three modes: \"Auto\" follows the order of all protocols and connections; \"Protocol only\" chooses within one protocol; \"Specific connection\" keeps the manual choice even when it fails. The Backup/Main groups are your VPS labels, not hidden fallback rules."
+msgstr "На странице «Прокси» доступны три режима: «Авто» следует порядку всех протоколов и подключений; «Только протокол» выбирает внутри него; «Конкретное подключение» сохраняет ручной выбор даже при отказе. Группы Backup/Main — ваши метки VPS, а не скрытые правила fallback."
+
+#: htdocs/luci-static/resources/view/flr/help.js:11
+msgid "Priority is set separately for protocols and for the connections within each. AWG and HY2 can take any place. A new order takes effect at the next choice; a healthy connection stays until you explicitly ask for re-evaluation."
+msgstr "Приоритет задаётся отдельно для протоколов и подключений внутри каждого. AWG и HY2 можно поставить на любое место. Новый порядок действует при следующем выборе; здоровое соединение сохраняется, пока вы явно не включите пересмотр."
+
+#: htdocs/luci-static/resources/view/flr/help.js:12
+msgid "AWG counts as degraded on sustained errors or slowdowns at both probe providers. A failure of one provider does not cause a switch. Returning needs fast successful probes at both providers for at least 60 s and an eligible priority. HTTPS/DNS timing is measured; it is no proof of throttling by the ISP."
+msgstr "AWG деградирует при устойчивых ошибках или замедлении у двух провайдеров проверок. Отказ одного провайдера не вызывает переключение. Возврат требует быстрых успешных проверок обоих провайдеров не менее 60 с и допустимого приоритета. Измеряется время HTTPS/DNS; это не доказательство ограничения со стороны провайдера."
+
+#: htdocs/luci-static/resources/view/flr/help.js:13
+msgid "AWG files with Table=off are accepted: FLR manages routing. JSON, URI, base64 and AWG imports are limited by the 64 KiB web envelope; subscriptions up to 1 MiB load through an HTTPS URL. Old keys and private configs are not shown. A connection test briefly changes the VPN path and then restores the original choice."
+msgstr "Файлы AWG с Table=off принимаются: маршрутизацией управляет FLR. Импорт JSON, URI, base64 и AWG ограничен полным веб-конвертом 64 КиБ; подписки до 1 МиБ загружаются через HTTPS URL. Старые ключи и приватные конфиги не выводятся. Проверка подключения кратковременно меняет VPN-путь, затем восстанавливает исходный выбор."
+
+#: htdocs/luci-static/resources/view/flr/help.js:14
+msgid "After the return to AWG a healthy reserve that was in use stays on: old TCP/UDP sessions keep going through it, new ones get the chosen route. A repeated AWG failure uses the same reserve. Replacing or deleting the connection, a manual mode change, a complete channel failure or a service stop can interrupt its sessions. A cold reserve is not started in advance while AWG has been healthy from the start."
+msgstr "После возврата на AWG здоровый уже использованный резерв остаётся включённым: старые TCP/UDP-сессии продолжают идти через него, новые получают выбранный маршрут. Повторный отказ AWG использует этот же резерв. При замене или удалении подключения, ручной смене режима, полном отказе канала либо остановке службы его сессии могут прерваться. Холодный резерв при первоначально здоровом AWG заранее не запускается."
+
+#: htdocs/luci-static/resources/view/flr/help.js:15
+msgid "\"Proxy\" shows the actual route of new connections, the retained reserve and the age of the last measurement. A skipped probe does not mean a failure. WAN diagnostics run separately and do not choose the VPN path."
+msgstr "В «Прокси» показаны фактический маршрут новых соединений, сохранённый резерв и давность последнего измерения. Пропущенная проверка не означает отказ. Диагностика WAN выполняется отдельно и не выбирает VPN-путь."
+
+#: htdocs/luci-static/resources/view/flr/help.js:16
+msgid "The history keeps up to 720 rounds and 256 events in RAM, at most 4 MiB. IDs, measurements and apply outcomes are recorded; keys, configs and command output are not stored. A service restart starts a new history. \"Download diagnostics\" needs write permission and returns bounded pages. If the history changes during the download, repeat it."
+msgstr "История хранит до 720 раундов и 256 событий в RAM, максимум 4 МиБ. Записываются идентификаторы, измерения и исходы применения; ключи, конфиги и вывод команд не сохраняются. Перезапуск службы начинает новую историю. «Скачать диагностику» требует права записи и выдаёт ограниченные страницы. Если во время загрузки история изменилась, повторите скачивание."
+
+#: htdocs/luci-static/resources/view/flr/help.js:17
+msgid "qBittorrent — direct via WAN"
+msgstr "qBittorrent — direct через WAN"
+
+#: htdocs/luci-static/resources/view/flr/help.js:18
+msgid "Mac 5.2.3: qBittorrent → Preferences / Settings → Connection → Proxy Server. PC: Tools → Options → Connection. Translated item names may differ."
+msgstr "Mac 5.2.3: qBittorrent → Preferences / Settings → Connection → Proxy Server. PC: Tools → Options → Connection. Названия переведённых пунктов могут отличаться."
+
+#: htdocs/luci-static/resources/view/flr/help.js:20
+msgid "Type: SOCKS5; Host: %s; Port: %s; Authentication: off."
+msgstr "Type: SOCKS5; Host: %s; Port: %s; Authentication: выключена."
+
+#: htdocs/luci-static/resources/view/flr/help.js:20
+msgid "router LAN address"
+msgstr "адрес роутера в LAN"
+
+#: htdocs/luci-static/resources/view/flr/help.js:21
+msgid "Enable \"Perform hostname lookup via proxy\" (DNS through the proxy)."
+msgstr "Включите «Perform hostname lookup via proxy» (DNS через прокси)."
+
+#: htdocs/luci-static/resources/view/flr/help.js:22
+msgid "Enable \"Use proxy for BitTorrent purposes\" and within it \"Use proxy for peer connections\". Otherwise peer connections can bypass SOCKS."
+msgstr "Включите «Use proxy for BitTorrent purposes» и внутри него «Use proxy for peer connections». Иначе соединения с пирами могут обходить SOCKS."
+
+#: htdocs/luci-static/resources/view/flr/help.js:23
+msgid "If your client version offers to block unsupported/unproxied connections or fallback, enable the block. The 5.2.3 interface has no separate old checkbox; SOCKS settings do not prove that every packet is covered."
+msgstr "Если версия клиента предлагает запрет неподдерживаемых/непроксируемых соединений или fallback, включите запрет. В интерфейсе 5.2.3 отдельного старого флажка нет; SOCKS-настройки не доказывают охват каждого пакета."
+
+#: htdocs/luci-static/resources/view/flr/help.js:24
+msgid "For a conservative SOCKS setup choose TCP, disable DHT, PeX, LSD and UPnP/NAT-PMP, and do not configure inbound port forwarding. This reduces unproxied paths but does not guarantee every packet."
+msgstr "Для консервативного режима SOCKS выбирайте TCP, выключите DHT, PeX, LSD и UPnP/NAT-PMP; не настраивайте входящее перенаправление портов. Это уменьшает непроксируемые пути, но не создаёт гарантию всех пакетов."
+
+#: htdocs/luci-static/resources/view/flr/help.js:26
+msgid "UDP ASSOCIATE is supported for IPv4: up to 4096 bytes, FRAG=0, one owner per IP, up to 32 destinations with an idle one removed after 60 seconds. Closing the controlling TCP connection closes UDP. DHT/uTP/UDP trackers depend on the libtorrent and client version; verify them separately or stay with TCP."
+msgstr "UDP ASSOCIATE поддерживается для IPv4: размер до 4096 байт, FRAG=0, один владелец на IP, до 32 назначений с удалением неактивного через 60 секунд. При закрытии управляющего TCP закрывается UDP. DHT/uTP/UDP-трекеры зависят от версии libtorrent и клиента; подтвердите отдельно или оставьте TCP."
+
+#: htdocs/luci-static/resources/view/flr/help.js:27
+msgid "SOCKS CONNECT does not accept inbound P2P connections. DHT/PeX/LSD, inbound connections, DNS, RSS and service requests cannot be considered covered by one checkbox. IPv6 SOCKS destinations are refused."
+msgstr "SOCKS CONNECT не принимает входящие P2P-соединения. DHT/PeX/LSD, входящие соединения, DNS, RSS и служебные запросы нельзя считать покрытыми одним флажком. IPv6-назначения SOCKS отклоняются."
+
+#: htdocs/luci-static/resources/view/flr/help.js:28
+msgid "For a stronger guarantee choose \"Settings → Device route → Direct\" for the Mac/PC IP: all routed IPv4 of the device goes through the WAN and never through the VPS. Pin its DHCP address. For IPv6 disable IPv6 on the device; the VPN policy gives it no direct guarantee."
+msgstr "Для более сильной гарантии выберите «Настройки → Маршрут устройства → Direct» для IP Mac/PC: весь маршрутизируемый IPv4 устройства идёт через WAN и не уходит через VPS. Закрепите DHCP-адрес. Для IPv6 отключите IPv6 на устройстве; VPN-политика не даёт ему direct-гарантию."
+
+#: htdocs/luci-static/resources/view/flr/help.js:29
+msgid "Rules by torrent domains do not recognize every peer and do not protect all P2P traffic. Stop SOCKS and check how the client behaves, then check the route with the WAN/VPN counters. These checks have not been run on your router yet."
+msgstr "Правила по доменам торрентов не распознают всех пиров и не защищают весь P2P-трафик. Остановите SOCKS и проверьте поведение клиента, затем проверьте маршрут по WAN/VPN-счётчикам. Эти проверки на вашем роутере ещё не выполнены."
+
+#: htdocs/luci-static/resources/view/flr/help.js:30
+msgid "On an error check \"Overview\" and the state of the controller, the listener and the components. Importing a profile does not activate the VPN. Do not confirm the rollback before checking LAN, WAN, VPN and direct."
+msgstr "При ошибке проверьте «Обзор», состояние контроллера, слушателя и компонентов. Импорт профиля не активирует VPN. Не подтверждайте откат до проверки LAN, WAN, VPN и direct."
+
+#: htdocs/luci-static/resources/view/flr/help.js:31
+msgid "Official qBittorrent 5.2.3 setting names"
+msgstr "Официальные названия настроек qBittorrent 5.2.3"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:12 htdocs/luci-static/resources/view/flr/proxy/order.js:15
+msgid "Specific connection"
+msgstr "Конкретное подключение"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:12
+msgid "Protocol only %s"
+msgstr "Только протокол %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:12 htdocs/luci-static/resources/view/flr/proxy/order.js:15
+msgid "Auto"
+msgstr "Авто"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:13
+msgid "Route of new connections: %s · choice: %s"
+msgstr "Маршрут новых соединений: %s · выбор: %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:13
+msgid "no working connection"
+msgstr "нет рабочего подключения"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:14
+msgid "Permanent SOCKS5: running · %s:%s"
+msgstr "Постоянный SOCKS5: работает · %s:%s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:14
+msgid "Permanent SOCKS5: not running · %s:%s"
+msgstr "Постоянный SOCKS5: не работает · %s:%s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:14
+msgid "LAN address unknown"
+msgstr "адрес LAN не определён"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:15
+msgid "FLR — status"
+msgstr "FLR — состояние"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:16
+msgid "Controller running"
+msgstr "Контроллер: работает"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:16
+msgid "Controller stopped"
+msgstr "Контроллер: остановлен"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:16
+msgid "VPN on"
+msgstr "VPN: включён"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:16
+msgid "VPN off"
+msgstr "VPN: выключен"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:17
+msgid "Transport: %s · games: %s"
+msgstr "Транспорт: %s · игры: %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:18
+msgid "waiting to be applied"
+msgstr "ожидает применения"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:20
+msgid "Retained reserve: %s · %s · details and history in \"Proxy\"."
+msgstr "Сохранённый резерв: %s · %s · подробности и история в «Прокси»."
+
+#: htdocs/luci-static/resources/view/flr/overview.js:21
+msgid "Router LAN address unknown, using the fallback: %s"
+msgstr "Адрес LAN роутера не определён, использован запасной: %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:25
+msgid "The VPN is off in the settings, but restoring the network has not finished. Repeat the shutdown."
+msgstr "VPN выключен в настройках, но восстановление сети не завершено. Повторите отключение."
+
+#: htdocs/luci-static/resources/view/flr/overview.js:26
+msgid "Repeat the shutdown"
+msgstr "Повторить отключение"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:30
+msgid "Rollback is armed. Confirm only after checking access to LuCI/LAN, the WAN, VPN routing and direct."
+msgstr "Откат вооружён. Подтвердите только после проверки доступа к LuCI/LAN, WAN, маршрутизации VPN и direct."
+
+#: htdocs/luci-static/resources/view/flr/overview.js:31
+msgid "I have checked LAN, WAN, VPN and direct"
+msgstr "Я проверил LAN, WAN, VPN и direct"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:32
+msgid "Accept the connection and disarm the rollback"
+msgstr "Принять подключение и снять откат"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:32
+msgid "Run and confirm the connection checks first."
+msgstr "Сначала выполните и подтвердите проверки подключения."
+
+#: htdocs/luci-static/resources/view/flr/overview.js:37
+msgid "healthy"
+msgstr "здоров"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:37
+msgid "interface missing"
+msgstr "интерфейс отсутствует"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:37
+msgid "three complete failures in a row"
+msgstr "три полных сбоя подряд"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:37
+msgid "sustained errors at both providers"
+msgstr "устойчивые ошибки у обоих провайдеров"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:37
+msgid "sustained slowdown at both providers"
+msgstr "устойчивое замедление у обоих провайдеров"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:39
+msgid "since %s"
+msgstr "с %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:40
+msgid "AWG health"
+msgstr "Здоровье AWG"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:40
+msgid "State: %s"
+msgstr "Состояние: %s"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:40
+msgid "waiting for measurements"
+msgstr "ожидание измерений"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:40
+msgid "chosen as healthy"
+msgstr "выбран как здоровый"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:40
+msgid "not chosen as healthy"
+msgstr "не выбран как здоровый"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:41
+msgid "Window: %s rounds · baseline: %s clean rounds · recovery: %s clean rounds"
+msgstr "Окно: %s раундов · база: %s чистых раундов · восстановление: %s чистых раундов"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:42
+msgid "The time of successful HTTPS/DNS requests is measured in ms; errors do not count as time. These observations do not prove intentional throttling."
+msgstr "Измеряется время успешных HTTPS/DNS-запросов в мс; ошибки не считаются временем. Эти наблюдения не доказывают намеренное ограничение."
+
+#: htdocs/luci-static/resources/view/flr/overview.js:43
+msgid "%s: errors %s · slow TCP/UDP %s/%s · last TCP/UDP %s/%s ms · baseline TCP/UDP %s/%s ms"
+msgstr "%s: ошибки %s · медленные TCP/UDP %s/%s · последний TCP/UDP %s/%s мс · база TCP/UDP %s/%s мс"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:43
+msgid "failed / no data"
+msgstr "сбой / нет данных"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:43
+msgid "none yet"
+msgstr "ещё нет"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:45
+msgid "Detailed channel checks"
+msgstr "Подробные проверки каналов"
+
+#: htdocs/luci-static/resources/view/flr/overview.js:45
+msgid "Repeat the checks"
+msgstr "Повторить проверки"
+
+#: htdocs/luci-static/resources/view/flr/profiles.js:5
+msgid "Open proxy management"
+msgstr "Открыть управление прокси"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:10
+msgid "link (URL)"
+msgstr "ссылка (URL)"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:10
+msgid "AWG file (.conf)"
+msgstr "файл AWG (.conf)"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:11
+msgid "The FLR import and compatible clients accept this link."
+msgstr "Ссылку принимают импорт FLR и совместимые клиенты."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:11
+msgid "A link cannot carry every setting of this connection, so this is JSON, which the FLR import accepts."
+msgstr "Ссылка не передаёт все параметры этого подключения, поэтому выдан JSON, который принимает импорт FLR."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:11
+msgid "AWG has no link format: this is the complete .conf file, which the FLR import accepts."
+msgstr "У AWG нет формата ссылки: это полный файл .conf, который принимает импорт FLR."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "queued"
+msgstr "в очереди"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "probing"
+msgstr "проверяется"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "restoring"
+msgstr "восстанавливается"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "finished"
+msgstr "завершена"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:11 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "cancelled by a new choice"
+msgstr "отменена новым выбором"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "not started"
+msgstr "не запущена"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:12 htdocs/luci-static/resources/view/flr/proxy/status.js:12
+msgid "restore needs a service restart"
+msgstr "восстановление требует перезапуска службы"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:13
+msgid "no checks yet"
+msgstr "проверок ещё нет"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:13
+msgid "checks pass, quality degraded"
+msgstr "проверки в норме, качество ухудшилось"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:13
+msgid "checks fail, quality degraded"
+msgstr "проверки не проходят, качество ухудшилось"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:13 htdocs/luci-static/resources/view/flr/proxy/connections.js:18
+msgid "checks pass"
+msgstr "проверки в норме"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:13
+msgid "checks fail"
+msgstr "проверки не проходят"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:17
+msgid "Active: new connections go here"
+msgstr "Активно: новые соединения идут здесь"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:18
+msgid "Warm reserve"
+msgstr "Тёплый резерв"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:18
+msgid "Retained reserve: old sessions keep going through it"
+msgstr "Сохранённый резерв: старые сессии продолжают идти через него"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:18
+msgid "state needs checking"
+msgstr "состояние требует проверки"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:19
+msgid "Waiting to be applied"
+msgstr "Ожидает применения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:20
+msgid "Not in use now"
+msgstr "Сейчас не используется"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:20
+msgid "Disabled for selection"
+msgstr "Выключено в выборе"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:21
+msgid "Test: %s"
+msgstr "Проверка: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:21 htdocs/luci-static/resources/view/flr/proxy/status.js:37
+msgid "TCP available"
+msgstr "TCP доступен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:21 htdocs/luci-static/resources/view/flr/proxy/status.js:37
+msgid "TCP failed"
+msgstr "TCP сбой"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:21 htdocs/luci-static/resources/view/flr/proxy/status.js:37
+msgid "UDP available"
+msgstr "UDP доступен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:21 htdocs/luci-static/resources/view/flr/proxy/status.js:37
+msgid "UDP failed"
+msgstr "UDP сбой"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:27 htdocs/luci-static/resources/view/flr/routing/transfer.js:42
+msgid "Export"
+msgstr "Экспорт"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:30
+msgid "FLR returned an invalid export."
+msgstr "FLR вернул некорректный экспорт."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:31
+msgid "Configuration %s"
+msgstr "Конфигурация %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:33
+msgid "Export: %s"
+msgstr "Экспорт: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:33
+msgid "Contains the connection keys and passwords. Do not publish it or send it over open channels; press \"Hide\" after copying."
+msgstr "Содержит ключи и пароли подключения. Не публикуйте и не пересылайте по открытым каналам; после копирования нажмите «Скрыть»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:34
+msgid "Copy"
+msgstr "Копировать"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:34
+msgid "The browser did not allow copying. Select the text and copy it by hand."
+msgstr "Браузер не разрешил копирование. Выделите текст и скопируйте вручную."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:34
+msgid "Configuration copied."
+msgstr "Конфигурация скопирована."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:34
+msgid "Copy configuration %s"
+msgstr "Копировать конфигурацию %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:35
+msgid "Download"
+msgstr "Скачать"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:35
+msgid "Download configuration %s"
+msgstr "Скачать конфигурацию %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:36
+msgid "Hide"
+msgstr "Скрыть"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:36
+msgid "Hide configuration %s"
+msgstr "Скрыть конфигурацию %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:37
+msgid "Export %s"
+msgstr "Экспорт %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:41
+msgid "New complete configuration: AWG, JSON, URI or base64"
+msgstr "Новая полная конфигурация: AWG, JSON, URI или base64"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:45
+msgid "Make active"
+msgstr "Сделать активным"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:45
+msgid "\"%s\" is unavailable: a component is missing. The manual choice will be kept, but VPN traffic is blocked until the connection works. Continue?"
+msgstr "«%s» недоступно: отсутствует компонент. Ручной выбор сохранится, но трафик VPN будет заблокирован, пока подключение не заработает. Продолжить?"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:45
+msgid "\"%s\" is disabled for selection. The manual choice will be kept, but VPN traffic is blocked until the connection works. Continue?"
+msgstr "«%s» выключено в выборе. Ручной выбор сохранится, но трафик VPN будет заблокирован, пока подключение не заработает. Продолжить?"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:45
+msgid "Choice cancelled."
+msgstr "Выбор отменён."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:45
+msgid "Make active %s"
+msgstr "Сделать активным %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:47
+msgid "Test"
+msgstr "Проверить"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:47
+msgid "A test briefly changes the VPN path, also when testing a disabled connection. Current TCP/UDP sessions may be interrupted. The original choice and an eligible reserve are restored afterwards; interrupted sessions do not come back. Continue?"
+msgstr "Проверка кратковременно меняет VPN-путь, включая проверку выключенного подключения. Текущие TCP/UDP-сессии могут прерваться. Затем восстанавливаются исходный выбор и допустимый резерв; уже прерванные сессии не возвращаются. Продолжить?"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:47
+msgid "Test cancelled."
+msgstr "Проверка отменена."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:47
+msgid "Test %s"
+msgstr "Проверить %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:49 htdocs/luci-static/resources/view/flr/routing/rules.js:58
+msgid "Delete"
+msgstr "Удалить"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:49
+msgid "Delete \"%s\"? The manual choice will be switched to \"Auto\" explicitly."
+msgstr "Удалить «%s»? Ручной выбор будет явно переведён в «Авто»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:49
+msgid "Delete \"%s\"?"
+msgstr "Удалить «%s»?"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:49 htdocs/luci-static/resources/view/flr/routing/rules.js:58
+msgid "Deletion cancelled."
+msgstr "Удаление отменено."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:49
+msgid "Delete %s"
+msgstr "Удалить %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:50
+msgid "TCP only"
+msgstr "Только TCP"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:51 htdocs/luci-static/resources/view/flr/proxy/order.js:17
+msgid "turned off"
+msgstr "выключено"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:52
+msgid "missing %s"
+msgstr "отсутствует %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:54
+msgid "No group set"
+msgstr "Группа не задана"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:54
+msgid "Chosen manually"
+msgstr "Выбрано вручную"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "Name, group, selection"
+msgstr "Название, группа, включение"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "Connection name"
+msgstr "Название"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "VPS group"
+msgstr "Группа VPS"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "Included in selection"
+msgstr "Включено в выбор"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "Save"
+msgstr "Сохранить"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:57
+msgid "Save %s"
+msgstr "Сохранить %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replace configuration"
+msgstr "Заменить конфигурацию"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replacing keeps the ID, name, group and inclusion. Paste the complete new config; the current one is available with the \"Export\" button."
+msgstr "Замена сохраняет ID, имя, группу и включение. Вставьте полный новый конфиг; текущий можно получить кнопкой «Экспорт»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "New config"
+msgstr "Новый конфиг"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replace configuration %s"
+msgstr "Заменить конфигурацию %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replacement file"
+msgstr "Файл для замены"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replace from file"
+msgstr "Заменить из файла"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:58
+msgid "Replace from file %s"
+msgstr "Заменить из файла %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:59
+msgid "Active"
+msgstr "Активно"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:63
+msgid "Proxy · connections"
+msgstr "Прокси · подключения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:63
+msgid "Mode:"
+msgstr "Режим:"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:64
+msgid "\"Make active\" pins a connection manually: when it fails, FLR does not switch on its own and VPN traffic is blocked until it recovers. \"Auto\" brings back fallback by the \"Order\" tab. A test briefly changes the VPN path and may interrupt sessions."
+msgstr "«Сделать активным» закрепляет подключение вручную: при его отказе FLR не переключается сам, трафик VPN блокируется до восстановления. «Авто» возвращает fallback по вкладке «Порядок». Проверка кратковременно меняет VPN-путь и может прервать сессии."
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:65
+msgid "Return to \"Auto\""
+msgstr "Вернуться к «Авто»"
+
+#: htdocs/luci-static/resources/view/flr/proxy/connections.js:66
+msgid "No connections. Add a configuration on the \"Import\" tab."
+msgstr "Подключений нет. Добавьте конфигурацию во вкладке «Импорт»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:11
+msgid "AWG [Interface]/[Peer], JSON, URI or a base64 subscription"
+msgstr "AWG [Interface]/[Peer], JSON, URI или подписка base64"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:12
+msgid "Add connections"
+msgstr "Добавить подключения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:13
+msgid "Import stores configs privately and does not turn the VPN on. The whole web request is limited to 64 KiB including UTF-8 and escaping. Subscriptions up to 1 MiB can be loaded through an HTTPS URL on the router. An export from the \"Connections\" tab (link, JSON or AWG file) is accepted here as is; a connection that is already stored is not added again."
+msgstr "Импорт сохраняет конфиги приватно и не включает VPN. Полный веб-запрос ограничен 64 КиБ с учётом UTF-8 и экранирования. Подписки до 1 МиБ можно загрузить через HTTPS URL на роутере. Экспорт из вкладки «Подключения» (ссылка, JSON или файл AWG) принимается здесь как есть; уже сохранённое подключение повторно не добавляется."
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:14
+msgid "Configuration / subscription"
+msgstr "Конфигурация / подписка"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:14
+msgid "Import text"
+msgstr "Импортировать текст"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:15
+msgid "AWG / JSON / URI file"
+msgstr "Файл AWG / JSON / URI"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:15 htdocs/luci-static/resources/view/flr/routing/transfer.js:26
+msgid "Import file"
+msgstr "Импортировать файл"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:16
+msgid "Subscription HTTPS URL"
+msgstr "HTTPS URL подписки"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:16
+msgid "Load subscription"
+msgstr "Загрузить подписку"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:17
+msgid "Proxy · import"
+msgstr "Прокси · импорт"
+
+#: htdocs/luci-static/resources/view/flr/proxy/import.js:17
+msgid "Stored connections: %s. New connections appear on the \"Connections\" tab and at the end of their protocol on the \"Order\" tab."
+msgstr "Сохранено подключений: %s. Новые подключения появляются во вкладке «Подключения» и в конце своего протокола во вкладке «Порядок»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:15
+msgid "Protocol only"
+msgstr "Только протокол"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:18
+msgid "Choose a connection"
+msgstr "Выберите подключение"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:18
+msgid "component missing"
+msgstr "компонент отсутствует"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:19
+msgid "Protocol"
+msgstr "Протокол"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:19
+msgid "Connection / VPS"
+msgstr "Подключение / VPS"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:22
+msgid "Selection mode"
+msgstr "Режим выбора"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:22
+msgid "Now: %s. Auto tries protocols and connections in your order. \"Protocol only\" allows fallback within it. A specific connection keeps the manual choice when it fails."
+msgstr "Сейчас: %s. Авто перебирает протоколы и подключения по вашему порядку. «Только протокол» допускает fallback внутри него. Конкретное подключение сохраняет ручной выбор при отказе."
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:22 htdocs/luci-static/resources/view/flr/routing/overview.js:39 htdocs/luci-static/resources/view/flr/settings.js:66
+msgid "Mode"
+msgstr "Режим"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:22
+msgid "Apply selection"
+msgstr "Применить выбор"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:27
+msgid "Move protocol up %s"
+msgstr "Поднять протокол %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:27
+msgid "Move protocol down %s"
+msgstr "Опустить протокол %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:28
+msgid "Move connection up %s"
+msgstr "Поднять подключение %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:28
+msgid "Move connection down %s"
+msgstr "Опустить подключение %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:28
+msgid "No connections yet"
+msgstr "Подключений пока нет"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:30
+msgid "Fallback priority"
+msgstr "Приоритет fallback"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:30
+msgid "Higher means earlier at the next choice. A healthy connection is kept after the order changes; tick the box for an immediate re-evaluation."
+msgstr "Выше — раньше при следующем выборе. Здоровое соединение сохраняется после изменения порядка; для немедленного пересмотра отметьте флажок."
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:30
+msgid "Re-evaluate the active connection now"
+msgstr "Пересмотреть активное подключение сейчас"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:30
+msgid "Save order"
+msgstr "Сохранить порядок"
+
+#: htdocs/luci-static/resources/view/flr/proxy/order.js:31
+msgid "Proxy · order"
+msgstr "Прокси · порядок"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "return to AWG"
+msgstr "возврат на AWG"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "switch to the reserve"
+msgstr "переход на резерв"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "connection choice"
+msgstr "выбор подключения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "AWG replacement"
+msgstr "замена AWG"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "connection unavailable"
+msgstr "подключение недоступно"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "channel failure"
+msgstr "отказ канала"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "cleanup retry"
+msgstr "повтор очистки"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "proxy replacement"
+msgstr "замена прокси"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "connection failed admission"
+msgstr "подключение не прошло проверку"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "manual test"
+msgstr "ручная проверка"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "service stop"
+msgstr "остановка службы"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:10
+msgid "warm reserve"
+msgstr "тёплый резерв"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:11
+msgid "applied"
+msgstr "применено"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:11
+msgid "error"
+msgstr "ошибка"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:11
+msgid "pending"
+msgstr "ожидает"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:11
+msgid "prepared"
+msgstr "подготовлено"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:17
+msgid "Proxy · status"
+msgstr "Прокси · состояние"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:18
+msgid "Requested mode"
+msgstr "Запрошен режим"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:19
+msgid "New connections · actual route"
+msgstr "Новые соединения · фактический маршрут"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:19
+msgid "No working connection"
+msgstr "Нет рабочего подключения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:20
+msgid "VPN is on"
+msgstr "Включён"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:20
+msgid "VPN is off"
+msgstr "Выключен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:21
+msgid "VPN traffic blocked"
+msgstr "трафик VPN заблокирован"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:21
+msgid "TCP · games/UDP blocked"
+msgstr "TCP · игры/UDP заблокированы"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "Warm reserve:"
+msgstr "Тёплый резерв:"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "Retained reserve:"
+msgstr "Сохранённый резерв:"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "%s · started in advance, the state needs checking."
+msgstr "%s · запущен заранее, состояние требует проверки."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "%s · started in advance and probed; it carries no sessions, so when AWG fails new connections move without a cold start."
+msgstr "%s · запущен заранее и проверяется; сессий на нём нет, при отказе AWG новые соединения перейдут без холодного старта."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "%s · the channel is kept, the state needs checking."
+msgstr "%s · канал сохранён, состояние требует проверки."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:23
+msgid "%s · old sessions keep using this channel."
+msgstr "%s · старые сессии продолжают использовать этот канал."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:24
+msgid "%s s ago"
+msgstr "%s с назад"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:24
+msgid "not received yet"
+msgstr "ещё не получено"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:24 root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Proxy"
+msgstr "Прокси"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:24
+msgid "Last measurement: %s"
+msgstr "Последнее измерение: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:25
+msgid "Measurement skipped: %s"
+msgstr "Измерение пропущено: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:25
+msgid "cancelled"
+msgstr "отмена"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:25
+msgid "no budget"
+msgstr "нет бюджета"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:25
+msgid "no result"
+msgstr "нет результата"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:26
+msgid "quality degraded"
+msgstr "качество ухудшилось"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:28
+msgid "History in RAM: %s rounds · %s decisions"
+msgstr "История в RAM: %s раундов · %s решений"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:29
+msgid "Last transition: %s / %s"
+msgstr "Последний переход: %s / %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:29
+msgid "route application"
+msgstr "применение маршрута"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:29
+msgid "outcome unknown"
+msgstr "исход неизвестен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:30
+msgid "Saving the history snapshot needs a retry; the current records can be downloaded."
+msgstr "Сохранение снимка истории требует повтора; текущие записи доступны для скачивания."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:31
+msgid "WAN diagnostics: %s · does not affect the VPN choice."
+msgstr "Диагностика WAN: %s · не влияет на выбор VPN."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:31
+msgid "result unknown"
+msgstr "результат неизвестен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:31
+msgid "TCP / UDP available"
+msgstr "TCP / UDP доступны"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:31
+msgid "the TCP/UDP check failed"
+msgstr "проверка TCP/UDP не прошла"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:32
+msgid "Applying is paused. The actual route is shown above."
+msgstr "Применение приостановлено. Фактический маршрут показан выше."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:32
+msgid "The choice is saved and waiting to be applied. TCP/UDP checks will confirm a working connection."
+msgstr "Выбор сохранён и ожидает применения. Рабочее соединение подтвердят проверки TCP/UDP."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:33
+msgid "Waiting to be applied: %s"
+msgstr "Ожидает применения: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:35
+msgid "No working connection. A manual choice is kept on failure; VPN traffic is blocked until it recovers."
+msgstr "Нет рабочего подключения. Ручной выбор сохраняется при отказе; трафик VPN блокируется до восстановления."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:37
+msgid "No confirmed measurement"
+msgstr "Нет подтверждённого измерения"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:38
+msgid "Connection test: %s"
+msgstr "Проверка подключения: %s"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:38
+msgid "original mode restored"
+msgstr "исходный режим восстановлен"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:38
+msgid "restore not confirmed"
+msgstr "восстановление не подтверждено"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:39
+msgid "A 180-second rollback is armed. After checking LAN, WAN, VPN and direct, confirm the connection in \"Overview\"."
+msgstr "Вооружён откат на 180 секунд. После проверки LAN, WAN, VPN и direct подтвердите подключение в «Обзоре»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:43
+msgid "Download diagnostics"
+msgstr "Скачать диагностику"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:44
+msgid "Diagnostics"
+msgstr "Диагностика"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:44
+msgid "The history keeps up to 720 rounds and 256 events in RAM. Downloading needs write permission and returns bounded pages; keys and configs are not included."
+msgstr "История хранит до 720 раундов и 256 событий в RAM. Скачивание требует права записи и выдаёт ограниченные страницы; ключи и конфиги не включаются."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:45
+msgid "VPN activation"
+msgstr "Активация VPN"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:45
+msgid "The first activation changes the network with a 180-second rollback guard. After the start check LAN/LuCI, the WAN, the chosen VPN connection and direct; then confirm in \"Overview\"."
+msgstr "Первая активация меняет сеть с защитой отката на 180 секунд. После запуска проверьте LAN/LuCI, WAN, выбранное VPN-подключение и direct; затем подтвердите в «Обзоре»."
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:45
+msgid "Activate VPN"
+msgstr "Активировать VPN"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:45
+msgid "Activate the VPN with the rollback guard and check LAN/WAN after the start?"
+msgstr "Активировать VPN с защитой отката и проверить LAN/WAN после запуска?"
+
+#: htdocs/luci-static/resources/view/flr/proxy/status.js:45
+msgid "Activation cancelled."
+msgstr "Активация отменена."
+
+#: htdocs/luci-static/resources/view/flr/proxy.js:7
+msgid "Open proxy status"
+msgstr "Открыть состояние прокси"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:13
+msgid "Routing · overview"
+msgstr "Маршрутизация · обзор"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:15 htdocs/luci-static/resources/view/flr/routing/transfer.js:13
+msgid "The controller did not return the routing policy: %s"
+msgstr "Контроллер не вернул политику маршрутизации: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:15 htdocs/luci-static/resources/view/flr/routing/rules.js:16
+msgid "no data"
+msgstr "нет данных"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Local domains"
+msgstr "Локальные домены"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Local addresses"
+msgstr "Локальные адреса"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Always via VPN"
+msgstr "Всегда через VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Essential direct services"
+msgstr "Обязательные direct-сервисы"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Game platforms"
+msgstr "Игровые платформы"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "VPN services"
+msgstr "Сервисы через VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Broad direct domains"
+msgstr "Широкие direct-домены"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:16
+msgid "Broad direct addresses"
+msgstr "Широкие direct-адреса"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:17
+msgid "Local"
+msgstr "Локально"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:17
+msgid "Direct (ISP)"
+msgstr "Напрямую (провайдер)"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:17
+msgid "VPN"
+msgstr "VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:17
+msgid "Games (VPN)"
+msgstr "Игры (VPN)"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:18
+msgid "exact domain"
+msgstr "точный домен"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:18
+msgid "domain and subdomains"
+msgstr "домен и поддомены"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:18
+msgid "keyword"
+msgstr "ключевое слово"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:18
+msgid "regular expression"
+msgstr "регулярное выражение"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:18
+msgid "address / subnet"
+msgstr "адрес / подсеть"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:20
+msgid "Active policy"
+msgstr "Действующая политика"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:21
+msgid "The private overlay from /etc/flr-runtime/policy is in use."
+msgstr "Используется частная политика из /etc/flr-runtime/policy."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:21
+msgid "The image default is in use: everything except local destinations goes through the VPN."
+msgstr "Используется политика образа по умолчанию: всё, кроме локальных назначений, идёт через VPN."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:22
+msgid "policy.json: status %s · version %s"
+msgstr "policy.json: статус %s · версия %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:24
+msgid "The private overlay was refused, so the image default is in use: %s"
+msgstr "Частная политика отклонена, поэтому используется политика образа: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:25
+msgid "A previous overlay is kept as a backup; \"Import & export\" can restore it."
+msgstr "Предыдущая частная политика сохранена как резервная копия; её можно восстановить во вкладке «Импорт и экспорт»."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:26
+msgid "The controller is not running; changes apply when it starts."
+msgstr "Контроллер не запущен; изменения вступят в силу при его запуске."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:26
+msgid "The VPN is not running; changes apply when it starts."
+msgstr "VPN не запущен; изменения вступят в силу при его запуске."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:26
+msgid "Applied live in mode %s."
+msgstr "Применено без перезапуска в режиме %s."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:27
+msgid "Last applied: %s (%s)."
+msgstr "Последнее применение: %s (%s)."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:29
+msgid "Custom rules are not in use: %s"
+msgstr "Собственные правила не применяются: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
+msgid "Split: lists from the private policy"
+msgstr "Раздельный: списки из частной политики"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
+msgid "Everything via VPN except essential direct services"
+msgstr "Всё через VPN, кроме обязательных direct-сервисов"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
+msgid "Everything via VPN"
+msgstr "Всё через VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:34
+msgid "Current: %s"
+msgstr "Текущий: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:35
+msgid "Routing mode"
+msgstr "Режим маршрутизации"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:36
+msgid "\"Split\" sends destinations from the private policy directly (without it, only local ones). \"Everything via VPN except essential direct services\" keeps a short list of services that do not work from a foreign address direct. \"Everything via VPN\" keeps only the LAN, the router itself and explicit direct (SOCKS, the \"Direct\" device route) direct."
+msgstr "«Раздельный» отправляет напрямую назначения из частной политики (без неё — только локальные). «Всё через VPN, кроме обязательных direct-сервисов» оставляет напрямую короткий список сервисов, которые не работают с зарубежного адреса. «Всё через VPN» оставляет напрямую только LAN, сам роутер и явный direct (SOCKS, маршрут устройства «Direct»)."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:37
+msgid "Custom \"direct\" rules apply in the first two modes; custom \"VPN\" rules apply in all of them."
+msgstr "Собственные правила «напрямую» действуют в первых двух режимах; правила «через VPN» — во всех."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:38
+msgid "The full modes increase traffic to the server, add latency for domestic sites and show them the server address."
+msgstr "Полные режимы увеличивают объём трафика к серверу, добавляют задержку для внутренних сайтов и показывают им адрес сервера."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:40
+msgid "Save routing mode"
+msgstr "Сохранить режим маршрутизации"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:40
+msgid "Choose a routing mode."
+msgstr "Выберите режим маршрутизации."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:44
+msgid "Search entries"
+msgstr "Поиск по записям"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:48 htdocs/luci-static/resources/view/flr/routing/rules.js:62
+msgid "Previous page"
+msgstr "Предыдущая страница"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:49 htdocs/luci-static/resources/view/flr/routing/rules.js:63
+msgid "Next page"
+msgstr "Следующая страница"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:50
+msgid "Entries of %s"
+msgstr "Записи: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:51 htdocs/luci-static/resources/view/flr/routing/rules.js:77
+msgid "Search"
+msgstr "Найти"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:51
+msgid "Close"
+msgstr "Закрыть"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:52
+msgid "%s–%s of %s matching (%s in total)."
+msgstr "%s–%s из %s найденных (всего %s)."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:53
+msgid "Kind"
+msgstr "Тип"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:53
+msgid "Value"
+msgstr "Значение"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:63
+msgid "unreadable: %s"
+msgstr "не читается: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:63
+msgid "%s in total · %s domain · %s address"
+msgstr "всего %s · доменных %s · адресных %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:64
+msgid "in use"
+msgstr "используется"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:64
+msgid "off in this mode"
+msgstr "выключен в этом режиме"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:65
+msgid "Browse %s"
+msgstr "Просмотреть %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:65
+msgid "Browse"
+msgstr "Просмотреть"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:67
+msgid "Rulesets"
+msgstr "Наборы правил"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:68
+msgid "Counts per matcher kind of the policy in use. Lists switched off by the routing mode stay listed but do not route."
+msgstr "Количество записей действующей политики по типам. Списки, выключенные режимом маршрутизации, показаны, но не применяются."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:69
+msgid "Ruleset"
+msgstr "Набор"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:69
+msgid "Class"
+msgstr "Класс"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:69
+msgid "Entries"
+msgstr "Записи"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:69
+msgid "In this mode"
+msgstr "В этом режиме"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:70 root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Custom rules"
+msgstr "Собственные правила"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:71
+msgid "Custom rules: %s in total, %s enabled (%s via VPN, %s direct)."
+msgstr "Собственные правила: всего %s, включено %s (через VPN %s, напрямую %s)."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:72
+msgid "Manage custom rules"
+msgstr "Управлять собственными правилами"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:14
+msgid "Routing · custom rules"
+msgstr "Маршрутизация · собственные правила"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:16
+msgid "The controller did not return the custom rules: %s"
+msgstr "Контроллер не вернул собственные правила: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:18
+msgid "Detect automatically"
+msgstr "Определить автоматически"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:18
+msgid "Domain and subdomains"
+msgstr "Домен и поддомены"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:18
+msgid "IPv4 address"
+msgstr "IPv4-адрес"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:18
+msgid "IPv4 subnet (CIDR)"
+msgstr "IPv4-подсеть (CIDR)"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:18
+msgid "IPv4 range (first-last)"
+msgstr "Диапазон IPv4 (первый-последний)"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:19
+msgid "Through the VPN"
+msgstr "Через VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:19
+msgid "Directly through the ISP"
+msgstr "Напрямую через провайдера"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:20
+msgid "domain"
+msgstr "домен"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:20
+msgid "address"
+msgstr "адрес"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:20
+msgid "subnet"
+msgstr "подсеть"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:20
+msgid "range"
+msgstr "диапазон"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:33
+msgid "Domain or address"
+msgstr "Домен или адрес"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:33
+msgid "Type"
+msgstr "Тип"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:33
+msgid "Route"
+msgstr "Маршрут"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:33
+msgid "Comment (optional)"
+msgstr "Комментарий (необязательно)"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:33
+msgid "Rule enabled"
+msgstr "Правило включено"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:37
+msgid "Enter a domain, an IPv4 address, a subnet or a range."
+msgstr "Укажите домен, IPv4-адрес, подсеть или диапазон."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:38
+msgid "Only IPv4 is supported: FLR does not route IPv6 destinations."
+msgstr "Поддерживается только IPv4: FLR не маршрутизирует IPv6-назначения."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:39
+msgid "Choose a type and a route."
+msgstr "Выберите тип и маршрут."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:44
+msgid "Add a rule"
+msgstr "Добавить правило"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:44
+msgid "Add rule"
+msgstr "Добавить правило"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:46
+msgid "via VPN"
+msgstr "через VPN"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:46
+msgid "direct (ISP)"
+msgstr "напрямую (провайдер)"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:47
+msgid "rule disabled"
+msgstr "правило выключено"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:49
+msgid "Local destinations cover this rule; there they always stay local."
+msgstr "Это правило перекрывается локальными назначениями; они всегда остаются локальными."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:50
+msgid "Ignored in the current routing mode \"Everything via VPN\"."
+msgstr "Не действует в текущем режиме маршрутизации «Всё через VPN»."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:57
+msgid "Disable"
+msgstr "Выключить"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:57
+msgid "Enable"
+msgstr "Включить"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:57
+msgid "Disable rule %s"
+msgstr "Выключить правило %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:57
+msgid "Enable rule %s"
+msgstr "Включить правило %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:58
+msgid "Delete the rule for \"%s\"?"
+msgstr "Удалить правило для «%s»?"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:58
+msgid "Delete rule %s"
+msgstr "Удалить правило %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:59
+msgid "Edit"
+msgstr "Изменить"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:59
+msgid "Save rule"
+msgstr "Сохранить правило"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:59
+msgid "Save rule %s"
+msgstr "Сохранить правило %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:61
+msgid "Search rules and comments"
+msgstr "Поиск по правилам и комментариям"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:66
+msgid "No custom rules match."
+msgstr "Подходящих собственных правил нет."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:67 htdocs/luci-static/resources/view/flr/routing/rules.js:69
+msgid "Rules %s–%s of %s matching (%s in total)."
+msgstr "Правила %s–%s из %s найденных (всего %s)."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:69
+msgid "The stored rules file is not in use: %s"
+msgstr "Сохранённый файл правил не применяется: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:74
+msgid "A custom rule sends a domain (with its subdomains), an IPv4 address, subnet or range either through the VPN or directly through the ISP. Custom rules take precedence over the lists of the routing policy; only local destinations always stay local. The most specific rule wins; for the same destination the VPN wins."
+msgstr "Собственное правило направляет домен (с поддоменами), IPv4-адрес, подсеть или диапазон либо через VPN, либо напрямую через провайдера. Собственные правила важнее списков политики маршрутизации; только локальные назначения всегда остаются локальными. Побеждает самое точное правило; при совпадении — VPN."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:75
+msgid "\"Direct\" rules apply in the routing modes \"Split\" and \"Everything via VPN except essential direct services\" and are ignored in \"Everything via VPN\"; \"VPN\" rules always apply. A change applies to new connections at once, without restarting the VPN; existing connections keep their route. IPv6 is not supported. The rules are stored on the router only."
+msgstr "Правила «напрямую» действуют в режимах «Раздельный» и «Всё через VPN, кроме обязательных direct-сервисов» и не действуют в режиме «Всё через VPN»; правила «через VPN» действуют всегда. Изменение сразу применяется к новым соединениям без перезапуска VPN; существующие соединения сохраняют свой маршрут. IPv6 не поддерживается. Правила хранятся только на роутере."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:77
+msgid "Rules"
+msgstr "Правила"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:12
+msgid "Routing · import & export"
+msgstr "Маршрутизация · импорт и экспорт"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:16
+msgid "%s of %s bytes"
+msgstr "%s из %s байт"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:17
+msgid "A backup of the previous overlay is saved."
+msgstr "Резервная копия предыдущей частной политики сохранена."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:17
+msgid "No backup is saved."
+msgstr "Резервной копии нет."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:21
+msgid "Download routing configuration"
+msgstr "Скачать конфигурацию маршрутизации"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:24
+msgid "Downloaded (%s)."
+msgstr "Скачано (%s)."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:24
+msgid "private overlay"
+msgstr "частная политика"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:24
+msgid "image default"
+msgstr "политика образа"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:30
+msgid "Import \"%s\"? The router checks the whole file first; the current overlay is kept as the backup."
+msgstr "Импортировать «%s»? Роутер сначала проверит весь файл; текущая частная политика сохранится как резервная копия."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:30
+msgid "Import cancelled."
+msgstr "Импорт отменён."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:34
+msgid "policy and rulesets"
+msgstr "политика и наборы правил"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:35
+msgid "%s custom rules"
+msgstr "собственных правил: %s"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:36
+msgid "Imported: %s."
+msgstr "Импортировано: %s."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:43
+msgid "Downloads the effective routing configuration as one JSON file: the policy in use (private overlay or image default), all its rulesets and the custom rules. The file contains your private routing lists; keep it private."
+msgstr "Скачивает действующую конфигурацию маршрутизации одним JSON-файлом: используемую политику (частную или политику образа), все её наборы правил и собственные правила. Файл содержит ваши частные списки маршрутизации; храните его в надёжном месте."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:45 root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Import"
+msgstr "Импорт"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:46
+msgid "Accepts a file from this export or a custom rules file. A policy in the file replaces the private overlay and custom rules in it replace the stored ones; parts the file does not contain stay as they are. The router checks the whole file before changing anything, keeps the current overlay as the backup and applies the result to new connections without restarting the VPN."
+msgstr "Принимает файл этого экспорта или файл собственных правил. Политика из файла заменяет частную политику, а собственные правила из файла заменяют сохранённые; то, чего нет в файле, остаётся без изменений. Роутер проверяет весь файл до любых изменений, сохраняет текущую частную политику как резервную копию и применяет результат к новым соединениям без перезапуска VPN."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:47
+msgid "Routing configuration file (.json)"
+msgstr "Файл конфигурации маршрутизации (.json)"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:48
+msgid "Apply the installed policy"
+msgstr "Применить установленную политику"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:49
+msgid "Reloads the installed policy and the custom rules and applies them to new connections, for example after installing an overlay by hand. Existing connections keep their route."
+msgstr "Перечитывает установленную политику и собственные правила и применяет их к новым соединениям, например после ручной установки частной политики. Существующие соединения сохраняют свой маршрут."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:50
+msgid "Reload and apply"
+msgstr "Перечитать и применить"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:51
+msgid "Image default and backup"
+msgstr "Политика образа и резервная копия"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:52
+msgid "\"Reset to image default\" moves the private overlay to the backup: everything except local destinations then goes through the VPN; custom rules stay. \"Restore backup\" brings the saved overlay back and keeps the current one as the backup."
+msgstr "«Сбросить к политике образа» переносит частную политику в резервную копию: после этого всё, кроме локальных назначений, идёт через VPN; собственные правила остаются. «Восстановить резервную копию» возвращает сохранённую частную политику, а текущую сохраняет как резервную копию."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:55
+msgid "Reset to image default"
+msgstr "Сбросить к политике образа"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:55
+msgid "Remove the private overlay? It is kept as the backup."
+msgstr "Убрать частную политику? Она сохранится как резервная копия."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:55
+msgid "Reset cancelled."
+msgstr "Сброс отменён."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:56
+msgid "Restore backup"
+msgstr "Восстановить резервную копию"
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:56
+msgid "Restore the saved overlay? The current one becomes the backup."
+msgstr "Восстановить сохранённую частную политику? Текущая станет резервной копией."
+
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:56
+msgid "Restore cancelled."
+msgstr "Восстановление отменено."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:13
+msgid "Observation window, s"
+msgstr "Окно наблюдения, с"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:13
+msgid "Minimum rounds in the window"
+msgstr "Минимум раундов в окне"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:14
+msgid "Errors per provider, %"
+msgstr "Ошибки каждого провайдера, %"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:14
+msgid "Slow requests per provider, %"
+msgstr "Медленные запросы каждого провайдера, %"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:15
+msgid "TCP: slowdown threshold, ms"
+msgstr "TCP: порог замедления, мс"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:15
+msgid "UDP: slowdown threshold, ms"
+msgstr "UDP: порог замедления, мс"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:16
+msgid "TCP: recovery / learning threshold, ms"
+msgstr "TCP: порог восстановления / обучения, мс"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:16
+msgid "UDP: recovery / learning threshold, ms"
+msgstr "UDP: порог восстановления / обучения, мс"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:17
+msgid "Baseline time multiplier: slowdown"
+msgstr "Множитель базового времени: замедление"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:17
+msgid "Baseline time multiplier: recovery"
+msgstr "Множитель базового времени: восстановление"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:18
+msgid "Clean rounds for the baseline time"
+msgstr "Чистые раунды для базового времени"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:18
+msgid "Continuous recovery, s"
+msgstr "Непрерывное восстановление, с"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:18
+msgid "Maximum pause between probes, s"
+msgstr "Максимальная пауза между проверками, с"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:23
+msgid "Off (no bypass)"
+msgstr "Выключен"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:23
+msgid "Experiment: fake ×2"
+msgstr "Эксперимент: fake ×2"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:26
+msgid "Device IPv4 address in the LAN"
+msgstr "IPv4 устройства из LAN"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:27
+msgid "Auto (domain policy)"
+msgstr "Авто (политика доменов)"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:27
+msgid "VPN — general"
+msgstr "VPN — общий"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:27
+msgid "VPN — games"
+msgstr "VPN — игры"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:27
+msgid "Direct — the whole device via the WAN"
+msgstr "Direct — всё устройство через WAN"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:35
+msgid "Tunnel queue (CAKE)"
+msgstr "Очередь в туннеле (CAKE)"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:36
+msgid "CAKE keeps the queue inside the VPN tunnel on the router, so games and calls do not wait behind large downloads. Set a rate slightly below the real line rate (about 5–10 % lower): if it is higher, the queue builds up at the ISP again. 0 leaves a direction unlimited."
+msgstr "CAKE держит очередь внутри VPN-туннеля на роутере, чтобы игры и звонки не ждали за большими загрузками. Укажите скорость немного ниже реальной скорости линии (примерно на 5–10 %): если задать выше, очередь снова соберётся у провайдера. 0 — направление без ограничения."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:37
+msgid "Allowed: 0 or 1000 to 10 000 000 kbit/s; enabling needs at least one non-zero rate."
+msgstr "Допустимо 0 или от 1000 до 10 000 000 кбит/с; для включения нужна хотя бы одна ненулевая скорость."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:38
+msgid "Enable CAKE in the tunnel"
+msgstr "Включить CAKE в туннеле"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:38
+msgid "Upload, kbit/s"
+msgstr "Отдача (upload), кбит/с"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:38
+msgid "Download, kbit/s"
+msgstr "Загрузка (download), кбит/с"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:39
+msgid "Save tunnel queue"
+msgstr "Сохранить очередь в туннеле"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:41
+msgid "Rate: 0 or a whole number from 1000 to 10 000 000 kbit/s."
+msgstr "Скорость: 0 или целое число от 1000 до 10 000 000 кбит/с."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:42
+msgid "To enable CAKE, set at least one rate."
+msgstr "Для включения CAKE укажите хотя бы одну скорость."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:48
+msgid "FLR settings"
+msgstr "Настройки FLR"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:49
+msgid "Protocol choice, VPS connections, fallback priority and configurations are on the \"Proxy\" page."
+msgstr "Выбор протокола, подключения VPS, приоритет fallback и конфигурации доступны на странице «Прокси»."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:50
+msgid "The routing mode, custom rules and the routing policy are on the \"Routing\" page."
+msgstr "Режим маршрутизации, собственные правила и политика маршрутизации находятся на странице «Маршрутизация»."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:52
+msgid "AWG resilience"
+msgstr "Устойчивость AWG"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:53
+msgid "Two independent providers: Cloudflare and Google. The HTTPS/DNS request time covers the whole request; it is not ICMP and no proof of intentional throttling. The threshold applies to each provider. A single error or a failure of one provider does not switch AWG."
+msgstr "Два независимых провайдера: Cloudflare и Google. Время HTTPS/DNS-запросов включает весь запрос; это не ICMP и не доказательство намеренного ограничения. Порог действует для каждого провайдера. Разовая ошибка или отказ одного провайдера не переключает AWG."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:54
+msgid "The minimum rounds are at most window/5 + 1. Recovery thresholds and their multiplier must be below the slowdown thresholds. The effective threshold is the maximum of the given time and baseline time × multiplier; while there is no baseline, the given time is used. Learning happens only below the recovery thresholds. Returning needs both providers and both protocols without a pause longer than the set limit (30 s by default). Turning the detector off keeps three complete failures, a missing interface and the return qualification."
+msgstr "Минимум раундов не больше окно/5 + 1. Пороги восстановления и их множитель должны быть ниже порогов замедления. Фактический порог — максимум указанного времени и базового времени × множитель; пока базы нет, используется указанное время. Обучение только ниже порогов восстановления. Для возврата нужны оба провайдера и оба протокола без паузы больше заданного предела (по умолчанию 30 с). Отключение детектора сохраняет три полных сбоя, отсутствие интерфейса и квалификацию возврата."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:55
+msgid "The values are preliminary: tuning for the installed router and ISP has not been verified yet. Saving changed thresholds resets the collected measurements and the recovery count."
+msgstr "Значения предварительные: настройка под установленный роутер и провайдера ещё не проверена. Сохранение изменённых порогов сбрасывает накопленные измерения и отсчёт восстановления."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:56
+msgid "Detect sustained impairments"
+msgstr "Распознавать устойчивые нарушения"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:57
+msgid "Save AWG checks"
+msgstr "Сохранить проверки AWG"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:57
+msgid "Thresholds must be whole numbers."
+msgstr "Пороги должны быть целыми числами."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:58
+msgid "Permanent direct SOCKS5"
+msgstr "Постоянный direct SOCKS5"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:58
+msgid "Works independently of the VPN and without expiry. The address is the router’s own LAN address, detected automatically (now: %s); port 1024–65535 except the temporary 1088 and the DNS ports. IPv6 destinations are not supported. One UDP ASSOCIATE per device IP; up to 32 destinations and 64 TCP connections."
+msgstr "Работает независимо от VPN и без срока действия. Адрес — собственный адрес роутера в LAN, он определяется автоматически (сейчас: %s); порт 1024–65535, кроме временного 1088 и портов DNS. IPv6-назначения не поддерживаются. Один UDP ASSOCIATE на IP устройства; до 32 назначений и 64 TCP-соединений."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:58
+msgid "not detected"
+msgstr "не определён"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:59
+msgid "Listener enabled"
+msgstr "Включён"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:59
+msgid "Router LAN address (detected automatically)"
+msgstr "Адрес роутера в LAN (определяется автоматически)"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:59
+msgid "TCP/UDP port"
+msgstr "Порт TCP/UDP"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:60
+msgid "Save direct"
+msgstr "Сохранить direct"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:61
+msgid "Experimental direct bypass (IPv4)"
+msgstr "Экспериментальный direct bypass (IPv4)"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:62
+msgid "Off by default. Only the first 6 outgoing direct packets: TCP 443 and QUIC UDP 443. The VPN, its outer connections, probes and the temporary SOCKS 1088 are excluded. Conntrack accounting must already be on; the controller does not change sysctl. The presets do not guarantee access at your ISP. Discord voice and Telegram need a separate check; arbitrary UDP ports are not handled."
+msgstr "По умолчанию выключен. Только первые 6 исходящих пакетов direct: TCP 443 и QUIC UDP 443. VPN, его внешние соединения, проверки и временный SOCKS 1088 исключены. Нужно уже включённое conntrack accounting; контроллер не меняет sysctl. Пресеты не гарантируют доступ у вашего провайдера. Discord voice и Telegram требуют отдельной проверки; произвольные UDP-порты не обрабатываются."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:63
+msgid "Explicitly enable the experiment"
+msgstr "Явно включить эксперимент"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:64
+msgid "Save direct bypass"
+msgstr "Сохранить direct bypass"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:65
+msgid "Device route"
+msgstr "Маршрут устройства"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:65
+msgid "Direct sends all routed IPv4 traffic of the device through the WAN, including unproxied inbound/outbound paths. IPv6 gets no such guarantee; disable it on the device for IPv4-only operation."
+msgstr "Direct направляет весь маршрутизируемый IPv4-трафик устройства через WAN, в том числе непроксируемые входящие/исходящие пути. IPv6 не получает такой гарантии; отключите его на устройстве для режима только IPv4."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:66
+msgid "Device IPv4"
+msgstr "IPv4 устройства"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:67
+msgid "Apply device mode"
+msgstr "Применить режим устройства"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:68
+msgid "Turning the VPN off"
+msgstr "Отключение VPN"
+
+#: htdocs/luci-static/resources/view/flr/settings.js:68
+msgid "Restores the saved network/firewall/DNS. If the restore does not finish, \"Overview\" shows a retry button. Direct SOCKS5 stays independent."
+msgstr "Восстанавливает сохранённую сеть/фаервол/DNS. Если восстановление не завершится, «Обзор» покажет кнопку повтора. Direct SOCKS5 остаётся независимым."
+
+#: htdocs/luci-static/resources/view/flr/settings.js:69
+msgid "Turn the VPN off / retry the restore"
+msgstr "Отключить VPN / повторить восстановление"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "FLR"
+msgstr "FLR"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Overview"
+msgstr "Обзор"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Status"
+msgstr "Состояние"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Connections"
+msgstr "Подключения"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Order"
+msgstr "Порядок"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Routing"
+msgstr "Маршрутизация"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Import & export"
+msgstr "Импорт и экспорт"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "Settings"
+msgstr "Настройки"
+
+#: root/usr/share/luci/menu.d/luci-app-flr.json
+msgid "qBittorrent and help"
+msgstr "qBittorrent и помощь"

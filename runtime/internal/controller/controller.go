@@ -134,6 +134,8 @@ type Controller struct {
 	basePolicy      *policy.Policy
 	appliedMode     string
 	applyStaticSets func(*policy.Policy) error
+	// routing: custom rules and routing policy API state (policy_api.go).
+	routing routingState
 	// roamSuspended mirrors what was last passed to SetRoamSuspended (held
 	// while a connection test runs). Guarded by adminMu.
 	roamSuspended bool
@@ -732,6 +734,7 @@ func (c *Controller) startVPN(ctx context.Context, p *policy.Policy, done chan<-
 	broker := dnsbroker.New(p, c, dnsbroker.NewKernelMappings())
 	broker.LocalPort = c.settings.LocalDNSPort
 	broker.WAN = o.WAN
+	broker.FilterPath = dnsbroker.DefaultFilterPath
 	if !c.router.IsZero() {
 		broker.Router = c.router.Addr
 	}
@@ -792,9 +795,11 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	c.ctx = ctx
-	c.basePolicy = p
+	// The base is the installed policy plus the owner's custom rules
+	// (policy_api.go); routing API changes replace it while running.
+	c.basePolicy = c.withCustomRules(p, StateDir)
 	c.appliedMode = c.settings.EffectiveRoutingMode()
-	c.policy = p.ForMode(c.appliedMode)
+	c.policy = c.basePolicy.ForMode(c.appliedMode)
 	c.stateDir = StateDir
 	c.historyPath = "/var/run/flr-runtime/history.json"
 	defer func() { cancel(); c.wan.Wait() }()

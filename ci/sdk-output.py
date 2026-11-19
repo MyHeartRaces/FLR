@@ -15,7 +15,7 @@ destination = output / "packages"
 destination.mkdir(parents=True, exist_ok=True)
 lock = load_resolved_lock(Path("/work"), output, os.environ.get("GIT_COMMIT"))
 check_native_lock(lock)
-names = ["kmod-amneziawg", "amneziawg-tools", "luci-proto-amneziawg", "luci-i18n-amneziawg-ru", "flint-sing-box", "flr-runtime", "luci-app-flr", "flint-xray", "flint-wstunnel", "flint-zapret2"]
+names = ["kmod-amneziawg", "amneziawg-tools", "luci-proto-amneziawg", "luci-i18n-amneziawg-ru", "flint-sing-box", "flr-runtime", "luci-app-flr", "luci-i18n-flr-ru", "flint-xray", "flint-wstunnel", "flint-zapret2"]
 packages = {}
 for name in names:
     paths = list((sdk / "bin").rglob(name + "-*.apk"))

@@ -35,7 +35,96 @@ type Broker struct {
 	Router netip.Addr
 	router atomic.Pointer[netip.Addr]
 	sem    chan struct{}
+	// FilterPath is an optional hashed name filter (see Filter) applied to
+	// client queries. Set it before Serve; the file is reloaded when it
+	// changes and a removed file disables the filter.
+	FilterPath string
+	filter     atomic.Pointer[Filter]
 }
+
+// SetFilter replaces the client query filter; nil disables it.
+func (b *Broker) SetFilter(f *Filter) { b.filter.Store(f) }
+
+// filterReload is how often Serve checks the filter file for changes.
+var filterReload = 30 * time.Second
+
+// watchFilter loads the filter file and reloads it when it changes. A file
+// that fails to parse keeps the previous filter; a removed file clears it.
+func (b *Broker) watchFilter(ctx context.Context, path string) {
+	var last filterStamp
+	load := func() {
+		st := statFilter(path)
+		if st == last {
+			return
+		}
+		f, e := LoadFilter(path)
+		if e != nil {
+			return
+		}
+		last = st
+		b.SetFilter(f)
+	}
+	load()
+	go func() {
+		t := time.NewTicker(filterReload)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				load()
+			}
+		}
+	}()
+}
+
+// ResolveClient answers a client query: the filter first, then Resolve.
+// Blocked names get NXDOMAIN; a rewritten name is answered as a CNAME to its
+// target followed by the target's records for the same type.
+func (b *Broker) ResolveClient(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg, error) {
+	f := b.filter.Load()
+	if f == nil || len(q.Question) != 1 {
+		return b.Resolve(ctx, q, view)
+	}
+	act, target := f.Decide(q.Question[0].Name)
+	switch act {
+	case FilterBlock:
+		r := new(mdns.Msg)
+		r.SetRcode(q, mdns.RcodeNameError)
+		r.RecursionAvailable = true
+		return r, nil
+	case FilterRewrite:
+		cname := &mdns.CNAME{Hdr: mdns.RR_Header{Name: q.Question[0].Name, Rrtype: mdns.TypeCNAME, Class: mdns.ClassINET, Ttl: 300}, Target: mdns.Fqdn(target)}
+		if q.Question[0].Qtype == mdns.TypeCNAME {
+			r := new(mdns.Msg)
+			r.SetReply(q)
+			r.RecursionAvailable = true
+			r.Answer = []mdns.RR{cname}
+			return r, nil
+		}
+		q2 := q.Copy()
+		q2.Question[0].Name = mdns.Fqdn(target)
+		r2, e := b.Resolve(ctx, q2, view)
+		if e != nil {
+			return nil, e
+		}
+		r := r2.Copy()
+		r.Question = q.Question
+		r.Answer = append([]mdns.RR{cname}, r.Answer...)
+		r.Id = q.Id
+		return r, nil
+	}
+	return b.Resolve(ctx, q, view)
+}
+
+// DohServer is a DNS-over-HTTPS upstream: its address and TLS name.
+type DohServer struct{ IP, Host string }
+
+// DirectDoH resolves names that leave through the ISP: Yandex DNS (basic
+// mode) over HTTPS, which works from Russian networks and keeps answers
+// local for domestic services.
+var DirectDoH = []DohServer{{"77.88.8.8", "common.dot.dns.yandex.net"}, {"77.88.8.1", "common.dot.dns.yandex.net"}}
 
 // SetRouter updates the router's LAN address while the broker is serving. An
 // invalid address is ignored, so the last known address or the fallback stays.
@@ -183,12 +272,20 @@ func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg
 				return Plain(ctx, m, "127.0.0.1:"+b.LocalPort, 0, "")
 			})
 		case contract.Direct:
+			mark := contract.OuterMark
+			if strings.HasPrefix(view.ID, "session:") {
+				mark |= contract.ProbeMark
+			}
+			// Encrypted DNS over the WAN first, so the ISP can neither see
+			// nor rewrite direct names; the ISP resolvers stay as fallback.
+			for _, provider := range DirectDoH {
+				pr := provider
+				list = append(list, func(ctx context.Context, m *mdns.Msg) (*mdns.Msg, error) {
+					return DoHDirect(ctx, m, pr.IP, pr.Host, mark, b.WAN)
+				})
+			}
 			for _, server := range wanResolvers(b.routerAddr()) {
 				addr := server
-				mark := contract.OuterMark
-				if strings.HasPrefix(view.ID, "session:") {
-					mark |= contract.ProbeMark
-				}
 				list = append(list, func(ctx context.Context, m *mdns.Msg) (*mdns.Msg, error) {
 					return Plain(ctx, m, addr, mark, b.WAN)
 				})
@@ -266,13 +363,16 @@ func (b *Broker) Serve(ctx context.Context, addr string) error {
 				view = v
 			}
 		}
-		r, e := b.Resolve(ctx, q, view)
+		r, e := b.ResolveClient(ctx, q, view)
 		if e != nil {
 			r = new(mdns.Msg)
 			r.SetRcode(q, mdns.RcodeServerFailure)
 		}
 		w.WriteMsg(r)
 	})
+	if b.FilterPath != "" {
+		b.watchFilter(ctx, b.FilterPath)
+	}
 	servers := []*mdns.Server{{Addr: addr, Net: "udp4", Handler: handler, UDPSize: 4096, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}, {Addr: addr, Net: "tcp4", Handler: handler, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}}
 	done := make(chan error, 2)
 	for _, s := range servers {
