@@ -10,8 +10,9 @@ python3 /work/ci/prepare-sdk.py /work /builder
 ./scripts/feeds install -a -p luci
 make defconfig
 # LuCI's language menu depends on luci-base; the SDK need not select that
-# target package. Select this vendored translation explicitly for packaging.
-make -j2 CONFIG_AUTOREMOVE= CONFIG_PACKAGE_luci-i18n-amneziawg-ru=m \
+# target package. Select the vendored and FLR translations explicitly for
+# packaging (luci.mk builds luci-i18n-flr-ru from packages/luci-app-flr/po/ru).
+make -j2 CONFIG_AUTOREMOVE= CONFIG_PACKAGE_luci-i18n-amneziawg-ru=m CONFIG_PACKAGE_luci-i18n-flr-ru=m \
   package/kmod-amneziawg/compile package/amneziawg-tools/compile \
   package/luci-proto-amneziawg/compile package/flint-sing-box/compile \
   package/flr-runtime/compile package/luci-app-flr/compile \

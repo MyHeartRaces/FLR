@@ -543,7 +543,8 @@ policy with the same layout at `/etc/flr-runtime/policy` (kept across
 sysupgrade; see `policy/README.md`) is used instead when it loads cleanly. A
 broken overlay is reported on stderr at start and the image policy is used,
 so a bad list never stops the router. The policy is read when the controller
-starts.
+starts and again by the routing API operations below (`routing-apply` after
+installing an overlay by hand applies it without a restart).
 
 ### Routing mode
 
@@ -564,6 +565,92 @@ address bindings of lists the mode switched off are dropped. Classification
 applies to new flows only, so established connections keep their channel.
 `split` is stored as an absent key; any other mode is stored, and a rollback
 to the 0.6 controller needs it removed first (RECOVERY-0.6).
+
+### Routing policy API
+
+LuCI «FLR → Routing» uses these operations. Their arguments are one object in
+the request field `routing`, for example
+`{"operation":"routing-entries","routing":{"ruleset":"vpn-services","query":"example","offset":0,"limit":100}}`.
+Unknown or duplicate argument keys are refused.
+
+| Operation | Permission | `routing` arguments | Successful `data` |
+| --- | --- | --- | --- |
+| `routing-policy` | read | none | `{mode, source:"overlay"\|"image", overlay_present, overlay_error, backup_present, policy:{policy.json text and number fields}, rulesets:[{name, class, counts:{domain, domain_suffix, domain_keyword, domain_regex, ip_cidr}, total, bytes, meta?, error?, active}], custom_rules:{summary:{total, enabled, vpn, direct}, revision, error}, live:{controller, vpn, applied_mode, last_apply?, last_apply_source?, custom_rules_error?}, limits}` |
+| `routing-entries` | read | `ruleset`, `query?`, `offset?`, `limit?` (1-200, default 100) | `{ruleset, source, total, matched, offset, entries:[{kind, value}]}`; `query` is a case-insensitive substring |
+| `routing-rules` | read | `query?`, `offset?`, `limit?` | `{revision, total, matched, offset, rules:[CustomRule + local?], error}`; `local` marks a rule that local destinations shadow |
+| `routing-rule-add` | write | `revision`, `rule:{type?, value, mode, comment?, enabled}` | `{revision, rule, total, apply}` |
+| `routing-rule-update` | write | `revision`, `id`, `rule` | same |
+| `routing-rule-delete` | write | `revision`, `id` | same, `rule:null` |
+| `routing-apply` | write | none | `{apply}`: reload the installed policy and the custom rules and apply them |
+| `routing-export` | write | `offset?`, `sha256?` (required after the first chunk) | `{format, source, size, sha256, offset, next, more, data:base64, filename}` |
+| `routing-import-begin` | write | `size` (1 B-16 MiB), `sha256` | `{staging_id, size, chunk_bytes}` |
+| `routing-import-chunk` | write | `staging_id`, `offset`, `data:base64` (at most 32 KiB decoded) | `{received, size}` |
+| `routing-import-commit` | write | `staging_id` | `{imported:{policy:bool, custom_rules?:n}, apply}` |
+| `routing-import-abort` | write | `staging_id` | `{aborted:true}` |
+| `routing-reset` | write | `accepted:true` | `{apply, backup_present}` |
+| `routing-restore-backup` | write | `accepted:true` | `{apply, backup_present}` |
+
+`apply` is `{applied, pending?, source, mode, overlay_error?,
+custom_rules_error?}`. With the VPN running the change takes effect at once
+through the routing-mode reconcile path: the effective policy (installed
+policy + custom rules, viewed for the routing mode) is rendered into the
+static nft sets in one transaction and handed to the DNS broker, which
+reclassifies the addresses it already issued. Only new flows are classified,
+so established connections keep their channel and the VPN is not restarted.
+If the nft update fails, `applied` is false, the previous view stays in force
+and the controller retries every round. Without a running controller or VPN
+the files are saved and used at the next start (`pending` says which).
+The export is a write like `connection-export` and `diagnostics-export`: it
+returns the private routing lists.
+
+**Custom rules** live in `/etc/flr-runtime/custom-rules.json` (0600, atomic
+write, kept across sysupgrade):
+`{"format":"flr-custom-routing-rules","version":1,"rules":[{"id","type","value","mode","comment","enabled"}]}`.
+
+- `type` is `domain` (suffix match: `example.com` also matches
+  `www.example.com`; `*.` and a leading or trailing dot are dropped;
+  internationalized names in punycode), `ip` (one IPv4 address), `cidr` (an
+  IPv4 subnet, at most /8 wide) or `range` (`first-last`, at most 32 CIDR
+  blocks). An empty type is inferred from the value. IPv6 is refused: the
+  dataplane's address sets are IPv4 and FLR does not route LAN IPv6.
+  `0.0.0.0/8`, loopback, multicast and `240.0.0.0/4` are refused, and so is
+  the same destination twice. At most 2048 rules; comments up to 120
+  characters.
+- `mode` `vpn` always sends the destination through the VPN; `direct` sends it
+  through the ISP in the `split` and `full_domestic` routing modes and is
+  ignored in `full`. A `vpn` address rule may not overlap the router LAN and
+  needs the LAN to be discovered.
+- Custom rules take precedence over every ruleset class except local
+  destinations (`local-domains`, `local-ips`), which always stay local. Among
+  custom rules the most specific match wins (longest domain suffix, longest
+  IPv4 prefix); an exact tie goes to the VPN. Device profiles `direct` and
+  `general` still cover a whole device. Address rules are the nft sets
+  `custom_vpn4` and `custom_direct4`, matched before every list-derived set;
+  domain rules are reported by DNS under `vpn-required` and
+  `direct-essential`, whose address sets are matched first.
+- Edits name the `revision` they were made against; a changed list is refused
+  with `routing rules changed; refresh before repeating the action`. An
+  unreadable or invalid file is ignored at start (status `last_error`), and
+  only an import replaces it.
+
+**Import and export** use one JSON document:
+`{"format":"flr-routing-bundle","version":1,"source","policy":{policy.json},"rulesets":{"<name>":{ruleset},…},"custom_rules":{…}}`.
+The export holds the policy in use (overlay, or the image policy when there is
+none) and the custom rules; it is built deterministically and cut into
+32 KiB base64 chunks, and a later chunk names the `sha256` of the first reply,
+so a change in between is refused. An import may carry the policy with all
+eight rulesets, the custom rules, or both; a bare custom rules file is also
+accepted. Chunks are staged in `/tmp/flr-routing-import` (0700, one import at
+a time; `begin` drops any other staged import, one hour expiry) and must
+arrive in order. `commit` checks size and SHA-256, validates everything,
+writes the candidate overlay into a temporary directory next to
+`/etc/flr-runtime/policy`, loads it with the controller's loader, then moves
+the current overlay to `/etc/flr-runtime/policy.backup` (replacing an older
+backup) and renames the candidate into place. A failure restores the previous
+overlay; a refused import changes nothing. Imported custom rules replace the
+stored list. `routing-reset` moves the overlay to the backup (the image
+policy applies; custom rules stay); `routing-restore-backup` swaps the backup
+back. The backup is kept across sysupgrade.
 
 ### Tunnel queueing (CAKE)
 

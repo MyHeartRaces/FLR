@@ -55,6 +55,7 @@ def prepare_sdk(project, sdk, output, source_commit):
         "CONFIG_PACKAGE_luci-proto-amneziawg=y", "CONFIG_PACKAGE_luci-i18n-amneziawg-ru=y",
         "CONFIG_LUCI_LANG_ru=y", "CONFIG_PACKAGE_flint-sing-box=y",
         *["CONFIG_PACKAGE_" + name + "=y" for name in ["flr-runtime", "luci-app-flr", "flint-xray", "flint-wstunnel", "flint-zapret2"]],
+        "CONFIG_PACKAGE_luci-i18n-flr-ru=y",
         "CONFIG_SIGNED_PACKAGES=y", "CONFIG_SIGNATURE_CHECK=y", "",
     ]))
     print("SDK configured for pinned AWG, runtime, LuCI and approved native releases")

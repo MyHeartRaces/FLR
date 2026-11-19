@@ -150,6 +150,13 @@ func (m *match) ip(ip netip.Addr) bool {
 func (p *Policy) IsRequiredVPN(name string) bool   { return p.sources["vpn-required"].domain(name) }
 func (p *Policy) ClassifyDomain(name string) Class { c, _ := p.DomainDecision(name); return c }
 func (p *Policy) DomainDecision(name string) (Class, string) {
+	if p.sources["local-domains"].domain(name) {
+		return Local, "local-domains"
+	}
+	// Custom rules (custom.go) precede every list except local destinations.
+	if class, ok := p.customDomain(name); ok {
+		return class, customDecisionSource(class)
+	}
 	for _, r := range []struct {
 		source string
 		class  Class
@@ -166,6 +173,9 @@ func (p *Policy) DomainDecision(name string) (Class, string) {
 func (p *Policy) ClassifyIP(ip netip.Addr) Class {
 	if p.sources["local-ips"].ip(ip) {
 		return Local
+	}
+	if class, ok := p.customIP(ip); ok {
+		return class
 	}
 	if p.sources["vpn-required"].ip(ip) || p.sources["vpn-services"].ip(ip) {
 		return General
@@ -239,17 +249,25 @@ func ValidMode(m string) bool {
 	return m == ModeSplit || m == ModeFullDomestic || m == ModeFull
 }
 
+// modeOff lists the sources a routing mode switches off (nil: none). Custom
+// "direct" rules follow direct-essential: they apply in split and
+// full_domestic and are ignored in full; custom "vpn" rules always apply.
+func modeOff(mode string) []string {
+	switch mode {
+	case ModeFull:
+		return []string{"direct-essential", "roscom-direct-domains", "roscom-direct-ips", CustomDirectSource}
+	case ModeFullDomestic:
+		return []string{"roscom-direct-domains", "roscom-direct-ips"}
+	}
+	return nil
+}
+
 // ForMode returns a read-only view of p for a routing mode. The view shares the
 // matchers of p; sources the mode switches off match nothing. An unknown or
 // empty mode is the split view (p itself).
 func (p *Policy) ForMode(mode string) *Policy {
-	var off []string
-	switch mode {
-	case ModeFull:
-		off = []string{"direct-essential", "roscom-direct-domains", "roscom-direct-ips"}
-	case ModeFullDomestic:
-		off = []string{"roscom-direct-domains", "roscom-direct-ips"}
-	default:
+	off := modeOff(mode)
+	if off == nil {
 		return p
 	}
 	v := &Policy{sources: make(map[string]*match, len(p.sources))}

@@ -49,6 +49,9 @@ type APIRequest struct {
 	Settings           json.RawMessage `json:"settings,omitempty"`
 	Activate           bool            `json:"activate,omitempty"`
 	Accepted           bool            `json:"accepted,omitempty"`
+	// Routing carries the arguments of the routing-* operations
+	// (controller/policy_api.go, docs/ROUTER-API.md).
+	Routing json.RawMessage `json:"routing,omitempty"`
 }
 
 func strictJSON(raw []byte, v any) error {
@@ -69,6 +72,8 @@ func strictJSON(raw []byte, v any) error {
 func (r APIRequest) Write() bool {
 	switch r.Operation {
 	case "status", "profiles", "help", "capabilities", "connection-list", "diagnostics":
+		return false
+	case "routing-policy", "routing-entries", "routing-rules":
 		return false
 	case "settings":
 		return len(r.Settings) != 0
@@ -127,6 +132,12 @@ func ParseAPI(raw []byte, rpc, readOnly bool) (APIRequest, error) {
 		"profile-delete": {"id": true}, "device": {"client": true, "value": true},
 		"settings": {"settings": true}, "primary-awg": {"content": true, "activate": true},
 		"rollback-confirm": {"accepted": true},
+	}
+	// Routing policy operations take their arguments in one object. The
+	// export returns the private routing lists, so like connection-export it
+	// is not a read and the read-only method refuses it.
+	for _, name := range []string{"routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup"} {
+		permitted[name] = map[string]bool{"routing": true}
 	}
 	fields, ok := permitted[r.Operation]
 	if !ok {
@@ -231,6 +242,10 @@ func ParseAPI(raw []byte, rpc, readOnly bool) (APIRequest, error) {
 	case "settings":
 		if len(r.Settings) > 0 && (bytes.Equal(r.Settings, []byte("null")) || r.Settings[0] != '{') {
 			return r, fmt.Errorf("settings must be object")
+		}
+	case "routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup":
+		if len(r.Routing) > 0 && (!apiObject(r.Routing) || CheckJSON(r.Routing) != nil) {
+			return r, fmt.Errorf("routing arguments must be an object")
 		}
 	case "rollback-confirm":
 		if !r.Accepted {

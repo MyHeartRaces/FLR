@@ -40,3 +40,15 @@
 /etc/flr-runtime/policy/rulesets/vpn-services.json
 /etc/flr-runtime/policy/rulesets/roscom-direct-domains.json
 /etc/flr-runtime/policy/rulesets/roscom-direct-ips.json
+# Owner's custom routing rules and the overlay saved by the last LuCI routing
+# import, reset or restore (docs/ROUTER-API.md, routing policy).
+/etc/flr-runtime/custom-rules.json
+/etc/flr-runtime/policy.backup/policy.json
+/etc/flr-runtime/policy.backup/rulesets/local-domains.json
+/etc/flr-runtime/policy.backup/rulesets/local-ips.json
+/etc/flr-runtime/policy.backup/rulesets/vpn-required.json
+/etc/flr-runtime/policy.backup/rulesets/direct-essential.json
+/etc/flr-runtime/policy.backup/rulesets/game-platforms.json
+/etc/flr-runtime/policy.backup/rulesets/vpn-services.json
+/etc/flr-runtime/policy.backup/rulesets/roscom-direct-domains.json
+/etc/flr-runtime/policy.backup/rulesets/roscom-direct-ips.json

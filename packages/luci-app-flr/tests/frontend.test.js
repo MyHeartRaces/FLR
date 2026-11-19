@@ -4,6 +4,7 @@ const vm = require('node:vm');
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const root = path.join(__dirname, '..');
 // LuCI128a7812f4be233c5dd7f7466f534fd888785caf: luci.js DOM.create
 // calls DOM.attr (line1595), which skips only null/undefined (1490–1517).
@@ -17,10 +18,31 @@ function luciElement(tag,attrs,children) {
  if(typeof children==='string' && /<[a-z]/i.test(children))children=[...children.matchAll(/<([a-z][a-z0-9]*)/gi)].map(m=>({tag:m[1].toLowerCase(),attrs:{},children:[],parsedFrom:children}));
  return {tag,attrs,children:children||[],value:tag==='select'?(children.find(n=>n.attrs.selected!=null)||children[0]).attrs.value:attrs.value,checked:attrs.checked!=null,disabled:attrs.disabled!=null,replaceChildren(...c){this.children=c;}};
 }
+// LuCI i18n (luci-base cbi.js): _() looks a source string up in the loaded
+// catalog, String.prototype.format substitutes %s/%d. The tests run the views
+// in Russian through the shipped po file, and in English without a catalog.
+function parsePo(file) {
+ const map={},unquote=s=>JSON.parse(s);let id=null;
+ for(const line of fs.readFileSync(file,'utf8').split('\n')) {
+  if(line.startsWith('msgid '))id=unquote(line.slice(6));
+  else if(line.startsWith('msgstr ') && id)map[id]=unquote(line.slice(7));
+ }
+ return map;
+}
+const RU=parsePo(path.join(root,'po/ru/flr.po'));
+const FORMAT='String.prototype.format=function(){var a=arguments,i=0;return this.replace(/%(%|s|d)/g,function(m,t){if(t==="%")return "%";var v=a[i++];if(t==="d")return String(parseInt(v,10));return v==null||typeof v==="object"||typeof v==="function"?"":String(v);});};';
+let language='ru';
+function translate(s){return language==='ru'?(RU[s]||s):language==='mark'?'⟦'+s+'⟧':s;}
+function run(source,scope,filename) {
+ const context=vm.createContext({_:s=>translate(s),...scope});
+ vm.runInContext(FORMAT,context);
+ return vm.runInContext('(function(){'+source+'})()',context,{filename});
+}
 function api(reply,canWrite=true,transport={calls:[],declarations:[]},browser={}) {
  const source = fs.readFileSync(path.join(root,'htdocs/luci-static/resources/flr.js'),'utf8');
- const scope = { baseclass:{extend:x=>x},rpc:{getSessionID:()=> 'a'.repeat(32),declare:options=>{transport.declarations.push(options);return async request=>{transport.calls.push({method:options.method,request});return reply;};}}, TextEncoder, E:luciElement,L:{hasViewPermission:()=>canWrite,resource:p=>'/luci-static/resources/'+p},ui:{addNotification:()=>{}}, console, ...browser };
- return vm.runInNewContext('(function(){'+source+'})()',scope);
+ transport.notes=transport.notes||[];
+ const scope = { baseclass:{extend:x=>x},rpc:{getSessionID:()=> 'a'.repeat(32),declare:options=>{transport.declarations.push(options);return async request=>{transport.calls.push({method:options.method,request});return typeof reply==='function'?reply(JSON.parse(request),options.method):reply;};}}, TextEncoder, E:luciElement,L:{hasViewPermission:()=>canWrite,resource:p=>'/luci-static/resources/'+p},ui:{addNotification:(t,node,kind)=>{transport.notes.push({kind,text:JSON.stringify(node)});}}, console, btoa, atob, ...browser };
+ return run(source,scope,'flr.js');
 }
 test('rejects absent, malformed, numeric and CLI failure replies',async()=> {
  for (const reply of [undefined,null,7,'garbage',{}, {ok:false,error:'failed'},{ok:true}]) {
@@ -84,8 +106,9 @@ test('rpc plugin allowlists methods and forwards literal stdin to fixed CLI',()=
   }
  } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
+const VIEWS=['overview','profiles','proxy','settings','help','proxy/status','proxy/connections','proxy/order','proxy/import','routing/overview','routing/rules','routing/transfer'];
 test('all LuCI modules parse using native LuCI function wrapper',()=>{
- for(const f of ['flr.js',...['overview','profiles','proxy','settings','help','proxy/status','proxy/connections','proxy/order','proxy/import'].map(p=>'view/flr/'+p+'.js')]) {
+ for(const f of ['flr.js',...VIEWS.map(p=>'view/flr/'+p+'.js')]) {
   new vm.Script('(function(){'+fs.readFileSync(path.join(root,'htdocs/luci-static/resources',f),'utf8')+'})()',{filename:f});
  }
 });
@@ -94,7 +117,7 @@ function viewModule(page,canWrite=true) {
  const source=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr',page+'.js'),'utf8');
  const E=luciElement;
  const flr={style:()=>E('link',{rel:'stylesheet',href:'/flr.css'}),group:api({ok:true,data:{}}).group,field:(name,input)=>E('label',{},[name,input]),action:(name,request)=>({tag:'action',name,request}),familyLabel:f=>f,read:async()=>({}),error:()=>{}};
- return vm.runInNewContext('(function(){'+source+'})()',{view:{extend:x=>x},E,flr,poll:{add:()=>{}},L:{hasViewPermission:()=>canWrite},window:{}});
+ return run(source,{view:{extend:x=>x},E,flr,poll:{add:()=>{}},L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:{}},page);
 }
 function allNodes(node) {if(!node||typeof node!=='object')return [];return [node,...(Array.isArray(node.children)?node.children:[node.children]).flatMap(allNodes)];}
 test('health settings sends complete numeric policy and preserves direct form',()=>{
@@ -173,7 +196,7 @@ function browser(){
  const record={copied:[],downloads:[],confirms:[]};
  const window={confirm:text=>{record.confirms.push(text);return record.confirmReply!==false;},location:{href:''},isSecureContext:true,navigator:{clipboard:{writeText:async text=>{record.copied.push(text);}}}};
  const document={createElement:()=>({click(){record.downloads.push({name:this.download,href:this.href});}}),execCommand:()=>false};
- class Blob{constructor(parts,options){record.blob={text:parts.join(''),type:options.type};}}
+ class Blob{constructor(parts,options){record.blob={text:parts.join(''),type:options.type};record.blobParts=parts;}}
  const URL={createObjectURL:()=>'blob:flr',revokeObjectURL:()=>{}};
  return {record,window,document,Blob,URL};
 }
@@ -181,7 +204,7 @@ function proxyHarness(canWrite=true,page='order'){
  const response={ok:true,data:proxyFixture()},transport={calls:[],declarations:[]},b=browser(),flr=api(response,canWrite,transport,{document:b.document,Blob:b.Blob,URL:b.URL}),pollers=[];
  const scope={view:{extend:x=>x},E:luciElement,flr,poll:{add:f=>pollers.push(f)},L:{hasViewPermission:()=>canWrite,resource:p=>'/luci-static/resources/'+p,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:b.window,document:b.document};
  const source=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/proxy',page+'.js'),'utf8');
- const mod=vm.runInNewContext('(function(){'+source+'})()',scope),tree=mod.render(response.data);
+ const mod=run(source,scope,page),tree=mod.render(response.data);
  return {tree,response,transport,pollers,flr,browser:b.record,nodes:()=>allNodes(tree),text:()=>JSON.stringify(tree),find(label){return allNodes(tree).find(n=>n.tag==='button'&&(n.children===label || n.attrs['aria-label']===label));},async click(label){const button=this.find(label);assert.ok(button,'missing action '+label);await button.attrs.click({currentTarget:button});},writes(){return transport.calls.filter(c=>c.method==='write').map(c=>JSON.parse(c.request));}};
 }
 test('unified selection and order helpers emit strict cloned policy',()=>{
@@ -194,13 +217,14 @@ test('unified selection and order helpers emit strict cloned policy',()=>{
 });
 test('Proxy is split into LuCI tabs and keeps the other pages',()=>{
  const menu=JSON.parse(fs.readFileSync(path.join(root,'root/usr/share/luci/menu.d/luci-app-flr.json')));
- assert.deepEqual(menu['admin/flr/proxy'],{title:'Прокси',order:20,action:{type:'firstchild'}});
+ assert.deepEqual(menu['admin/flr/proxy'],{title:'Proxy',order:20,action:{type:'firstchild'}});
  const tabs=Object.keys(menu).filter(k=>k.startsWith('admin/flr/proxy/')).sort((a,b)=>menu[a].order-menu[b].order);
- assert.deepEqual(tabs.map(k=>[k,menu[k].title,menu[k].action.type,menu[k].action.path]),[
-  ['admin/flr/proxy/status','Состояние','view','flr/proxy/status'],['admin/flr/proxy/connections','Подключения','view','flr/proxy/connections'],
-  ['admin/flr/proxy/order','Порядок','view','flr/proxy/order'],['admin/flr/proxy/import','Импорт','view','flr/proxy/import']]);
+ assert.deepEqual(tabs.map(k=>[k,menu[k].title,RU[menu[k].title],menu[k].action.type,menu[k].action.path]),[
+  ['admin/flr/proxy/status','Status','Состояние','view','flr/proxy/status'],['admin/flr/proxy/connections','Connections','Подключения','view','flr/proxy/connections'],
+  ['admin/flr/proxy/order','Order','Порядок','view','flr/proxy/order'],['admin/flr/proxy/import','Import','Импорт','view','flr/proxy/import']]);
  for(const k of tabs)assert.ok(fs.existsSync(path.join(root,'htdocs/luci-static/resources/view',menu[k].action.path+'.js')),k);
- assert.deepEqual(['overview','settings','help'].map(p=>menu['admin/flr/'+p].title),['Обзор','Настройки','qBittorrent и помощь']);
+ assert.deepEqual(['overview','settings','help'].map(p=>RU[menu['admin/flr/'+p].title]),['Обзор','Настройки','qBittorrent и помощь']);
+ assert.equal(RU[menu['admin/flr/proxy'].title],'Прокси');
  assert.equal(menu['admin/flr/profiles'].title,undefined);
  const legacy=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/profiles.js'),'utf8');assert.match(legacy,/L\.url\('admin',\s*'flr',\s*'proxy',\s*'connections'\)/);
  const old=fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/proxy.js'),'utf8');assert.match(old,/L\.url\('admin',\s*'flr',\s*'proxy',\s*'status'\)/);
@@ -317,30 +341,22 @@ test('proxy status labels a warm standby apart from a reserve with old sessions'
  const h=proxyHarness(false,'status');
  async function show(warm,healthy){const d=proxyFixture();d.status.active_connection=d.connections[2];d.status.selection={general:'awg',games:'awg'};d.status.proxy.reserve_connection=d.connections[0];d.status.proxy.reserve_warm=warm;d.status.channels={awg:{healthy:true,last_check:'2026-10-06T00:00:00Z',probe:{measured:true,tcp:true,udp:true}},gecko:{healthy,last_check:'2026-10-06T00:00:00Z',probe:{measured:true,tcp:healthy,udp:healthy}}};d.status.diagnostics={rounds:3,decisions:1,last_decision:{reason:'warm_reserve',outcome:'applied'}};h.response.data=d;await h.pollers[0]();return h.text();}
  let text=await show(true,true);
- assert.match(text,/Тёплый резерв: /);assert.match(text,/сессий на нём нет/);assert.match(text,/без холодного старта/);assert.match(text,/тёплый резерв \/ применено/);
+ assert.match(text,/Тёплый резерв:/);assert.match(text,/сессий на нём нет/);assert.match(text,/без холодного старта/);assert.match(text,/тёплый резерв \/ применено/);
  assert.doesNotMatch(text,/старые сессии/);assert.doesNotMatch(text,/Сохранённый резерв/);
  text=await show(true,false);
- assert.match(text,/Тёплый резерв: /);assert.match(text,/запущен заранее, состояние требует проверки/);assert.doesNotMatch(text,/сессий на нём нет/);
+ assert.match(text,/Тёплый резерв:/);assert.match(text,/запущен заранее, состояние требует проверки/);assert.doesNotMatch(text,/сессий на нём нет/);
  text=await show(false,true);
- assert.match(text,/Сохранённый резерв: /);assert.match(text,/старые сессии продолжают использовать этот канал/);assert.doesNotMatch(text,/Тёплый резерв/);
+ assert.match(text,/Сохранённый резерв:/);assert.match(text,/старые сессии продолжают использовать этот канал/);assert.doesNotMatch(text,/Тёплый резерв/);
 });
 test('status tab downloads diagnostics through the write method',async()=>{
  const h=proxyHarness(true,'status'),meta={boot:'boot',source:'a'.repeat(40),version:'0.6-runtime',last_sequence:1,dropped_rounds:0,dropped_decisions:0,dropped_round_sequence:0,dropped_decision_sequence:0};
  h.response.data={...meta,rounds:[{sequence:1}],decisions:[],next:1,more:false};await h.click('Скачать диагностику');
  assert.deepEqual(h.writes().at(-1),{operation:'diagnostics-export',value:'0'});assert.equal(h.browser.downloads.at(-1).name,'flr-diagnostics.json');assert.equal(h.browser.blob.type,'application/json');
 });
-test('settings routing mode is a bounded select and hidden for older controllers',()=>{
- const tree=viewModule('settings').render([{options:{},routing_mode:'split'},{}]),nodes=allNodes(tree);
- const select=nodes.find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');assert.ok(select);assert.equal(select.value,'split');
- assert.deepEqual(JSON.parse(JSON.stringify(select.children.map(o=>[o.attrs.value,[].concat(o.children)[0]]))),[['split','Раздельный: списки из частной политики'],['full_domestic','Всё через VPN, кроме обязательных direct-сервисов'],['full','Всё через VPN']]);
- const action=nodes.find(n=>n.name==='Сохранить режим маршрутизации');
- for(const mode of ['full','full_domestic','split']){select.value=mode;assert.deepEqual(JSON.parse(JSON.stringify(action.request())),{operation:'settings',settings:{routing_mode:mode}});}
- select.value='everything';assert.throws(()=>action.request(),/режим/);
- const older=allNodes(viewModule('settings').render([{options:{}},{}]));
- assert.equal(older.some(n=>n.attrs&&n.attrs['data-field']==='routing_mode'),false);assert.equal(older.some(n=>n.name==='Сохранить режим маршрутизации'),false);assert.doesNotMatch(JSON.stringify(older),/Режим маршрутизации/);
- const unknown=allNodes(viewModule('settings').render([{options:{},routing_mode:'<b>future</b>'},{}])),current=unknown.find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
- assert.equal(current.value,'<b>future</b>');assert.equal(unknown.some(n=>n.tag==='b'),false);assert.throws(()=>unknown.find(n=>n.name==='Сохранить режим маршрутизации').request());
- const readonly=allNodes(viewModule('settings',false).render([{options:{},routing_mode:'full'},{}])).find(n=>n.attrs&&n.attrs['data-field']==='routing_mode');assert.equal(readonly.disabled,true);
+test('settings no longer carries the routing mode and points to the Routing page',()=>{
+ const nodes=allNodes(viewModule('settings').render([{options:{},routing_mode:'split'},{}]));
+ assert.equal(nodes.some(n=>n.attrs&&n.attrs['data-field']==='routing_mode'),false);assert.equal(nodes.some(n=>n.name==='Сохранить режим маршрутизации'),false);
+ assert.match(JSON.stringify(nodes),/«Маршрутизация»/);
 });
 test('diagnostic export freezes cursor range and refuses stale or stalled pages',async()=>{
  const a=api({ok:true,data:{}}),meta={boot:'boot',source:'a'.repeat(40),version:'0.6-runtime',last_sequence:3,dropped_rounds:0,dropped_decisions:0,dropped_round_sequence:0,dropped_decision_sequence:0};let values=[];
@@ -389,4 +405,210 @@ test('settings tunnel CAKE sends the complete object, bounds rates and hides for
  const off=render({enabled:false,upload_kbit:0,download_kbit:0});assert.equal(off.find(n=>n.attrs&&n.attrs['data-field']==='upload_kbit').value,0);
  const older=allNodes(viewModule('settings').render([{options:{}},{}]));assert.equal(older.some(n=>n.name==='Сохранить очередь в туннеле'),false);assert.doesNotMatch(JSON.stringify(older),/CAKE/);
  for(const control of render({enabled:true,upload_kbit:45000,download_kbit:0},false).filter(n=>n.attrs&&['upload_kbit','download_kbit'].includes(n.attrs['data-field'])))assert.equal(control.disabled,true);
+});
+
+// ---- i18n -----------------------------------------------------------------
+const MSGID=/_\('((?:[^'\\]|\\.)*)'\)/g;
+function sources(){return ['flr.js',...VIEWS.map(p=>'view/flr/'+p+'.js')].map(f=>[f,fs.readFileSync(path.join(root,'htdocs/luci-static/resources',f),'utf8')]);}
+function poIds(file){return new Set(Object.keys(parsePo(file)));}
+test('every msgid is in the Russian catalog and the template; no Russian is left in the sources',()=>{
+ const pot=poIds(path.join(root,'po/templates/flr.pot')),used=new Set();
+ for(const [f,text] of sources()) {
+  assert.doesNotMatch(text,/[А-Яа-яЁё]/,f+' still has Russian source text');
+  assert.doesNotMatch(text,/(?<![A-Za-z0-9_$.])_\((?!')/,f+' calls _() with a non-literal');
+  for(const m of text.matchAll(MSGID)) {
+   const id=m[1];used.add(id);
+   assert.ok(!/\\/.test(id) && id===id.trim(),f+': msgid needs no escapes or edge whitespace: '+id);
+   assert.ok(RU[id],f+': missing Russian translation: '+id);assert.ok(pot.has(id),f+': missing from flr.pot: '+id);
+   const holes=x=>(x.match(/%[sd]/g)||[]).length;assert.equal(holes(RU[id]),holes(id),'placeholders differ: '+id);
+  }
+ }
+ const menu=JSON.parse(fs.readFileSync(path.join(root,'root/usr/share/luci/menu.d/luci-app-flr.json'),'utf8'));
+ for(const node of Object.values(menu))if(node.title){assert.doesNotMatch(node.title,/[А-Яа-яЁё]/);assert.ok(RU[node.title] && pot.has(node.title),node.title);used.add(node.title);}
+ for(const id of pot)assert.ok(used.has(id),'stale msgid in flr.pot: '+id);
+ assert.deepEqual([...poIds(path.join(root,'po/ru/flr.po'))].sort(),[...pot].sort());
+});
+test('the package builds the Russian translation and the image installs it',()=>{
+ // luci.mk: LUCI_BASENAME "flr" from luci-app-flr; po/ru/*.po → luci-i18n-flr-ru with flr.ru.lmo.
+ const project=path.join(root,'../..');
+ assert.match(fs.readFileSync(path.join(root,'Makefile'),'utf8'),/include \$\(TOPDIR\)\/feeds\/luci\/luci\.mk/);
+ const lock=JSON.parse(fs.readFileSync(path.join(project,'build/versions.lock.json'),'utf8'));
+ assert.ok(lock.packages.includes('luci-i18n-flr-ru'));
+ for(const [file,want] of [['ci/prepare-sdk.py','CONFIG_PACKAGE_luci-i18n-flr-ru=y'],['ci/sdk-output.py','"luci-i18n-flr-ru"'],['ci/sdk-build.sh','CONFIG_PACKAGE_luci-i18n-flr-ru=m'],['ci/buildlib.py',"'usr/lib/lua/luci/i18n/flr.ru.lmo'"]])
+  assert.ok(fs.readFileSync(path.join(project,file),'utf8').includes(want),file);
+});
+// Every visible string of every view comes through _(): render with a
+// translator that marks its output, drop marked text and fixture data, and
+// no words may remain.
+function words(tree,data) {
+ const known=new Set();(function walk(v){if(typeof v==='string')known.add(v);else if(v&&typeof v==='object')for(const [k,x] of Object.entries(v)){known.add(k);walk(x);}})(data);
+ const texts=[];(function walk(n){if(typeof n==='string'){texts.push(n);return;}if(!n||typeof n!=='object')return;for(const k of ['aria-label','placeholder','title'])if(n.attrs&&typeof n.attrs[k]==='string')texts.push(n.attrs[k]);(Array.isArray(n.children)?n.children:[n.children]).forEach(walk);})(tree);
+ const allowed=new Set(['TCP','UDP','QUIC','VPN','AWG','HY2','VLESS','REALITY','TLS','ShadowTLS','WebSocket','SS2022','JSON','Cloudflare','Google','sing','box','Xray','https','down','awg','gecko','hy2','flr','css','luci','static','resources','split','full','domestic']);
+ const left=[];
+ for(let t of texts){for(let prev='';prev!==t;){prev=t;t=t.replace(/⟦[^⟦⟧]*⟧/g,' ');}for(const k of [...known].sort((a,b)=>b.length-a.length))if(k.length>1)t=t.split(k).join(' ');for(const w of t.match(/[A-Za-zА-Яа-яЁё]{3,}/g)||[])if(!allowed.has(w))left.push(w);}
+ return left;
+}
+test('views pass every visible text through _()',async()=>{
+ const fixtures=[['overview',{runtime:true,vpn_enabled:true,rollback_pending:true,deactivation_pending:true,status:{proxy:{reserve_connection:{name:'R',family:'hy2'},pending:true},direct_proxy:{lan_error:'x',config:{bind:'192.168.1.1',port:1080}},channels:{awg:{reason:'sustained_latency',window:{samples:1},probe:{targets:[]},recovery_since:'2026-11-01'}}}}],
+  ['settings',[{options:{},tunnel_qos:{enabled:true,upload_kbit:1000,download_kbit:0},direct_proxy:{enabled:true,bind:'192.168.1.1',port:1080}},{}]],['help',{direct_proxy:{bind:'192.168.1.1',port:1080}}]];
+ const prev=language;language='mark';
+ try {
+  for(const [page,data] of fixtures){const left=words(viewModule(page).render(data),data);assert.deepEqual(left,[],page);}
+  for(const page of proxyTabs){const h=proxyHarness(true,page),d=proxyFixture();d.status.active_connection=d.connections[0];d.status.proxy.reserve_connection=d.connections[1];d.status.connection_test={id:'a',phase:'finished',measured:true,tcp:true,udp:false,restored:true};d.status.channels={gecko:{healthy:true,last_check:'2026-10-06T00:00:00Z',probe:{not_measured:'cancelled'}}};d.status.diagnostics={rounds:1,decisions:1,last_decision:{reason:'fallback',outcome:'applied'},wan:{probe:{measured:true,tcp:true,udp:true}}};h.response.data=d;await h.click(proxyRefresh());await h.pollers[0]();assert.deepEqual(words(h.tree,d),[],page);}
+  for(const page of ['overview','rules','transfer']){const h=await routingHarness(page);assert.deepEqual(words(h.tree,h.fixture),[],'routing/'+page);}
+ } finally {language=prev;}
+});
+function proxyRefresh(){return translate('Refresh settings');}
+test('English is the source language: views render without a catalog and without Russian',async()=>{
+ const prev=language;language='en';
+ try {
+  const texts=[JSON.stringify(viewModule('overview').render({status:{}})),JSON.stringify(viewModule('settings').render([{options:{}},{}])),JSON.stringify(viewModule('help').render({}))];
+  for(const page of proxyTabs)texts.push(proxyHarness(true,page).text());
+  for(const page of ['overview','rules','transfer'])texts.push(JSON.stringify((await routingHarness(page)).tree));
+  for(const t of texts)assert.doesNotMatch(t,/[А-Яа-яЁё]/);
+  assert.match(texts[0],/FLR — status/);assert.match(texts.at(-3),/Routing · overview/);
+ } finally {language=prev;}
+});
+
+// ---- routing --------------------------------------------------------------
+function routingFixture() {
+ const rulesets=['local-domains','local-ips','vpn-required','direct-essential','game-platforms','vpn-services','roscom-direct-domains','roscom-direct-ips'].map((name,i)=>({name,class:name.startsWith('local')?'local':name.includes('direct')?'direct':name==='game-platforms'?'games':'general',counts:name==='vpn-services'?{domain:2500}:{domain_suffix:i},total:name==='vpn-services'?2500:i,bytes:10,active:!name.startsWith('roscom'),meta:null,error:''}));
+ return {
+  policy:{mode:'full_domestic',source:'overlay',overlay_present:true,overlay_error:'',backup_present:true,policy:{status:'synthetic <b>x</b>',version:3,note:'note <img src=x>'},rulesets,custom_rules:{summary:{total:2,enabled:1,vpn:1,direct:0},revision:'rev1',error:''},live:{controller:true,vpn:true,applied_mode:'full_domestic',last_apply:'2026-11-19T00:00:00Z',last_apply_source:'overlay'},limits:{}},
+  rules:{revision:'rev1',total:2,matched:2,offset:0,error:'',rules:[{id:'r1',type:'domain',value:'example.com',mode:'vpn',comment:'note <img src=x>',enabled:true},{id:'r2',type:'cidr',value:'192.168.0.0/16',mode:'direct',comment:'',enabled:false,local:true}]},
+ };
+}
+async function routingHarness(page,canWrite=true,respond) {
+ const fixture=routingFixture(),transport={calls:[],declarations:[]},b=browser();
+ const entries=Array.from({length:2500},(_,i)=>({kind:'domain',value:'host'+i+'.example.org'}));
+ const reply=(request,method)=>{
+  const r=request.routing||{};
+  if(respond){const custom=respond(request,method);if(custom!==undefined)return custom;}
+  switch(request.operation) {
+   case 'routing-policy':return {ok:true,data:fixture.policy};
+   case 'routing-rules':return {ok:true,data:fixture.rules};
+   case 'routing-entries':{const q=(r.query||'').toLowerCase(),m=entries.filter(e=>e.value.includes(q));return {ok:true,data:{ruleset:r.ruleset,source:'overlay',total:entries.length,matched:m.length,offset:r.offset,entries:m.slice(r.offset,r.offset+r.limit)}};}
+   default:return {ok:true,data:{apply:{applied:true,source:'overlay',mode:'split'},revision:'rev2'}};
+  }
+ };
+ const flr=api(reply,canWrite,transport,{document:b.document,Blob:b.Blob,URL:b.URL});
+ const scope={view:{extend:x=>x},E:luciElement,flr,L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:b.window,document:b.document};
+ const mod=run(fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/routing',page+'.js'),'utf8'),scope,page);
+ const tree=mod.render(await mod.load());
+ return {tree,fixture,transport,flr,browser:b.record,nodes:()=>allNodes(tree),text:()=>JSON.stringify(tree),
+  find(label){return allNodes(tree).find(n=>n.tag==='button'&&(n.children===label || n.attrs['aria-label']===label));},
+  async click(label){const button=this.find(label);assert.ok(button,'missing button '+label);return button.attrs.click({currentTarget:button});},
+  requests(){return transport.calls.map(c=>({method:c.method,...JSON.parse(c.request)}));}};
+}
+test('routing menu adds Overview, Custom rules and Import & export tabs',()=>{
+ const menu=JSON.parse(fs.readFileSync(path.join(root,'root/usr/share/luci/menu.d/luci-app-flr.json')));
+ assert.deepEqual(menu['admin/flr/routing'],{title:'Routing',order:25,action:{type:'firstchild'}});assert.equal(RU.Routing,'Маршрутизация');
+ const tabs=Object.keys(menu).filter(k=>k.startsWith('admin/flr/routing/')).sort((a,b)=>menu[a].order-menu[b].order);
+ assert.deepEqual(tabs.map(k=>[menu[k].title,menu[k].action.path]),[['Overview','flr/routing/overview'],['Custom rules','flr/routing/rules'],['Import & export','flr/routing/transfer']]);
+ for(const k of tabs)assert.ok(fs.existsSync(path.join(root,'htdocs/luci-static/resources/view',menu[k].action.path+'.js')),k);
+});
+test('routing overview shows the policy and pages ruleset entries without dumping them',async()=>{
+ const h=await routingHarness('overview');
+ assert.deepEqual(h.requests()[0],{method:'read',operation:'routing-policy'});
+ const text=h.text();assert.match(text,/Используется частная политика/);assert.match(text,/всего 2500 · доменных 2500 · адресных 0/);assert.match(text,/выключен в этом режиме/);assert.match(text,/Резервная копия|резервная копия/);
+ assert.equal(h.nodes().some(n=>n.parsedFrom),false,'policy text parsed as HTML');
+ await h.click('Просмотреть vpn-services');
+ assert.deepEqual(h.requests().at(-1),{method:'read',operation:'routing-entries',routing:{ruleset:'vpn-services',query:'',offset:0,limit:100}});
+ const rows=()=>h.nodes().filter(n=>n.tag==='tr'&&n.children.length===2&&n.children[1].attrs&&/flr-value/.test(n.children[1].attrs.class||''));
+ assert.equal(rows().length,100,'one page of entries only');assert.match(h.text(),/1–100 из 2500 найденных \(всего 2500\)/);
+ await h.click('Следующая страница');assert.equal(h.requests().at(-1).routing.offset,100);assert.match(h.text(),/101–200 из 2500/);
+ h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='entry-query').value='host12';await h.click('Найти');
+ assert.deepEqual(h.requests().at(-1).routing,{ruleset:'vpn-services',query:'host12',offset:0,limit:100});assert.match(h.text(),/1–100 из 111 найденных/);
+ assert.ok(h.requests().every(r=>r.method==='read'),'browsing writes nothing');
+ const ro=await routingHarness('overview',false);assert.equal(ro.find('Просмотреть vpn-services').disabled,false,'reading needs no write permission');
+});
+test('routing mode is a bounded select on the Routing overview',async()=>{
+ const h=await routingHarness('overview'),select=h.nodes().find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
+ assert.ok(select);assert.equal(select.value,'full_domestic');
+ assert.deepEqual(JSON.parse(JSON.stringify(select.children.map(o=>[o.attrs.value,[].concat(o.children)[0]]))),[['split','Раздельный: списки из частной политики'],['full_domestic','Всё через VPN, кроме обязательных direct-сервисов'],['full','Всё через VPN']]);
+ for(const mode of ['full','full_domestic','split']){select.value=mode;await h.click('Сохранить режим маршрутизации');assert.deepEqual(h.requests().at(-1),{method:'write',operation:'settings',settings:{routing_mode:mode}});}
+ select.value='everything';const before=h.requests().length;await h.click('Сохранить режим маршрутизации');assert.equal(h.requests().length,before);assert.match(h.transport.notes.at(-1).text,/режим/);
+ const unknown=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:true,data:{...routingFixture().policy,mode:'<b>future</b>'}}:undefined),current=unknown.nodes().find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
+ assert.equal(current.value,'<b>future</b>');assert.equal(unknown.nodes().some(n=>n.tag==='b'),false);
+ const ro=await routingHarness('overview',false);assert.equal(ro.nodes().find(n=>n.attrs&&n.attrs['data-field']==='routing_mode').disabled,true);assert.equal(ro.find('Сохранить режим маршрутизации').disabled,true);
+ const old=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:false,data:null,error:'unknown operation'}:undefined);assert.match(old.text(),/unknown operation/);
+});
+test('custom rules: add, toggle, edit and delete carry the revision; conflicts reload the list',async()=>{
+ const h=await routingHarness('rules');
+ assert.deepEqual(h.requests().slice(0,2).map(r=>r.operation),['routing-rules','routing-policy']);
+ assert.match(h.text(),/Это правило перекрывается локальными назначениями/);assert.equal(h.nodes().some(n=>n.parsedFrom),false);
+ const field=name=>h.nodes().find(n=>n.attrs&&n.attrs['data-field']===name);
+ field('new-value').value=' Example.org ';field('new-mode').value='direct';field('new-comment').value='synthetic';
+ await h.click('Добавить правило');
+ assert.deepEqual(h.requests().at(-2),{method:'write',operation:'routing-rule-add',routing:{rule:{type:'',value:'Example.org',mode:'direct',comment:'synthetic',enabled:true},revision:'rev1'}});
+ assert.equal(h.requests().at(-1).operation,'routing-rules','list reloaded after the change');
+ assert.ok(h.transport.notes.some(n=>/Применено к новым соединениям/.test(n.text)));
+ let count=h.requests().length;field('new-value').value='2001:db8::1';await h.click('Добавить правило');assert.equal(h.requests().length,count,'IPv6 reached the router');
+ field('new-value').value='';await h.click('Добавить правило');assert.equal(h.requests().length,count);
+ await h.click('Выключить правило example.com');
+ assert.deepEqual(h.requests().at(-2),{method:'write',operation:'routing-rule-update',routing:{id:'r1',rule:{type:'domain',value:'example.com',mode:'vpn',comment:'note <img src=x>',enabled:false},revision:'rev1'}});
+ field('edit-r1-value').value='example.net';field('edit-r1-mode').value='direct';await h.click('Сохранить правило example.com');
+ assert.deepEqual(h.requests().at(-2).routing,{id:'r1',rule:{type:'domain',value:'example.net',mode:'direct',comment:'note <img src=x>',enabled:true},revision:'rev1'});
+ h.browser.confirmReply=false;count=h.requests().length;await h.click('Удалить правило example.com');assert.equal(h.requests().length,count,'delete without confirmation');
+ h.browser.confirmReply=true;await h.click('Удалить правило example.com');assert.deepEqual(h.requests().at(-2),{method:'write',operation:'routing-rule-delete',routing:{id:'r1',revision:'rev1'}});
+ const c=await routingHarness('rules',true,(r)=>r.operation==='routing-rule-add'?{ok:false,data:null,error:'routing rules changed; refresh before repeating the action'}:undefined);
+ c.nodes().find(n=>n.attrs&&n.attrs['data-field']==='new-value').value='example.org';await c.click('Добавить правило');
+ assert.equal(c.requests().at(-1).operation,'routing-rules','conflict must reload the rules');
+ const ro=await routingHarness('rules',false);
+ for(const n of ro.nodes().filter(n=>['input','select','button'].includes(n.tag)&&!['rule-query'].includes(n.attrs['data-field'])&&!['Найти','Предыдущая страница','Следующая страница'].includes(n.children)))assert.equal(n.disabled,true,'writable under read ACL: '+(n.attrs['aria-label']||n.attrs['data-field']||n.children));
+});
+test('SHA-256 helper matches node crypto',()=>{
+ const a=api({ok:true,data:{}});
+ for(const n of [0,1,55,56,63,64,65,1000,100003]){const bytes=crypto.randomBytes(n);assert.equal(a.sha256(new Uint8Array(bytes)),crypto.createHash('sha256').update(bytes).digest('hex'),String(n));}
+ assert.deepEqual([...a.base64ToBytes(a.bytesToBase64(new Uint8Array([0,255,1,128])))],[0,255,1,128]);
+ assert.throws(()=>a.base64ToBytes('<b>'));
+});
+test('routing export downloads checked chunks; a change in between is refused',async()=>{
+ const data=Buffer.from(JSON.stringify({format:'flr-routing-bundle',pad:'x'.repeat(80000)})),sum=crypto.createHash('sha256').update(data).digest('hex'),chunk=32768;
+ let changed=false;
+ const h=await routingHarness('transfer',true,r=>{if(r.operation!=='routing-export')return undefined;const o=(r.routing&&r.routing.offset)||0,end=Math.min(o+chunk,data.length);if(o&&r.routing.sha256!==sum)return {ok:false,data:null,error:'bad'};return {ok:true,data:{format:'flr-routing-bundle',source:'overlay',size:data.length,sha256:changed&&o?'0'.repeat(64):sum,offset:o,next:end,more:end<data.length,data:data.subarray(o,end).toString('base64'),filename:'flr-routing.json'}};});
+ await h.click('Скачать конфигурацию маршрутизации');
+ const exports=h.requests().filter(r=>r.operation==='routing-export');
+ assert.deepEqual(exports.map(r=>[r.method,(r.routing||{}).offset||0]),[['write',0],['write',32768],['write',65536]]);assert.equal(exports[1].routing.sha256,sum);
+ assert.equal(h.browser.downloads.at(-1).name,'flr-routing.json');assert.equal(h.browser.blob.type,'application/json');
+ assert.ok(Buffer.from(h.browser.blobParts[0]).equals(data),'downloaded bytes differ');
+ changed=true;const downloads=h.browser.downloads.length;await h.click('Скачать конфигурацию маршрутизации');
+ assert.equal(h.browser.downloads.length,downloads,'changed export downloaded');assert.match(h.transport.notes.at(-1).text,/изменилась во время экспорта/);
+ const ro=await routingHarness('transfer',false);for(const label of ['Скачать конфигурацию маршрутизации','Импортировать файл','Перечитать и применить','Сбросить к политике образа','Восстановить резервную копию'])assert.equal(ro.find(label).disabled,true,label);
+});
+test('routing import sends size, SHA-256 and ordered chunks within the request limit',async()=>{
+ const data=Buffer.from(JSON.stringify({format:'flr-custom-routing-rules',version:1,rules:[],pad:'y'.repeat(70000)})),sum=crypto.createHash('sha256').update(data).digest('hex');
+ let failChunk=-1;
+ const h=await routingHarness('transfer',true,(r)=>{
+  if(r.operation==='routing-import-begin')return {ok:true,data:{staging_id:'0123456789abcdef',size:r.routing.size,chunk_bytes:32768}};
+  if(r.operation==='routing-import-chunk')return r.routing.offset===failChunk?{ok:false,data:null,error:'chunk out of order'}:{ok:true,data:{received:r.routing.offset}};
+  if(r.operation==='routing-import-commit')return {ok:true,data:{imported:{policy:true,custom_rules:3},apply:{applied:false,pending:'not applied yet; the controller retries every round'}}};
+  return undefined;
+ });
+ const input=h.nodes().find(n=>n.tag==='input'&&n.attrs.type==='file');
+ input.files=[{name:'routing.json',size:data.length,arrayBuffer:async()=>data.buffer.slice(data.byteOffset,data.byteOffset+data.length)}];
+ h.browser.confirmReply=false;await h.click('Импортировать файл');assert.equal(h.requests().filter(r=>r.method==='write').length,0,'import without confirmation');
+ h.browser.confirmReply=true;await h.click('Импортировать файл');
+ const writes=h.requests().filter(r=>r.method==='write');
+ assert.deepEqual(writes[0],{method:'write',operation:'routing-import-begin',routing:{size:data.length,sha256:sum}});
+ const chunks=writes.filter(r=>r.operation==='routing-import-chunk');assert.deepEqual(chunks.map(r=>r.routing.offset),[0,32768,65536]);
+ assert.ok(Buffer.concat(chunks.map(r=>Buffer.from(r.routing.data,'base64'))).equals(data));assert.ok(chunks.every(r=>r.routing.staging_id==='0123456789abcdef'));
+ assert.deepEqual(writes.at(-1),{method:'write',operation:'routing-import-commit',routing:{staging_id:'0123456789abcdef'}});
+ assert.match(h.text(),/Импортировано: политика и наборы правил, собственных правил: 3\./);assert.ok(h.transport.notes.some(n=>/Сохранено, но ещё не применено: not applied yet/.test(n.text)));
+ assert.ok(h.transport.calls.every(c=>h.flr.httpRequestBytes(JSON.parse(c.request),'a'.repeat(32),c.method)<=65536),'a chunk exceeds the LuCI request limit');
+ failChunk=32768;await h.click('Импортировать файл');
+ assert.equal(h.requests().at(-1).operation,'routing-import-abort','failed upload must drop the staged import');assert.match(h.transport.notes.at(-1).text,/chunk out of order/);
+ input.files=[{name:'big.json',size:16*1024*1024+1,arrayBuffer:async()=>new ArrayBuffer(1)}];const count=h.requests().length;await h.click('Импортировать файл');assert.equal(h.requests().length,count,'oversized file sent');
+});
+test('reset and restore need confirmation and send explicit acceptance',async()=>{
+ const h=await routingHarness('transfer');
+ h.browser.confirmReply=false;await h.click('Сбросить к политике образа');assert.equal(h.requests().filter(r=>r.method==='write').length,0);
+ h.browser.confirmReply=true;await h.click('Сбросить к политике образа');assert.deepEqual(h.requests().at(-1),{method:'write',operation:'routing-reset',routing:{accepted:true}});
+ await h.click('Восстановить резервную копию');assert.deepEqual(h.requests().at(-1),{method:'write',operation:'routing-restore-backup',routing:{accepted:true}});
+ await h.click('Перечитать и применить');assert.deepEqual(h.requests().at(-1),{method:'write',operation:'routing-apply'});
+});
+test('rpcd ACL needs no change: routing reads use the read method, routing writes the write method',async()=>{
+ const h=await routingHarness('overview');assert.ok(h.requests().every(r=>r.method==='read'));
+ const acl=JSON.parse(fs.readFileSync(path.join(root,'root/usr/share/rpcd/acl.d/luci-app-flr.json')));
+ assert.deepEqual(acl['luci-app-flr'].write.ubus,{'luci.flr':['write']});
 });

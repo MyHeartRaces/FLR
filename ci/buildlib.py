@@ -124,7 +124,10 @@ RUNTIME_FILES = [
     'www/luci-static/resources/flr.js', 'www/luci-static/resources/flr.css',
     *['www/luci-static/resources/view/flr/' + name + '.js'
       for name in ['overview', 'profiles', 'proxy', 'settings', 'help',
-                   'proxy/status', 'proxy/connections', 'proxy/order', 'proxy/import']],
+                   'proxy/status', 'proxy/connections', 'proxy/order', 'proxy/import',
+                   'routing/overview', 'routing/rules', 'routing/transfer']],
+    # Russian LuCI catalog from luci-i18n-flr-ru (luci.mk: po/ru/flr.po).
+    'usr/lib/lua/luci/i18n/flr.ru.lmo',
 ]
 
 

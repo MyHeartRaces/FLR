@@ -6,29 +6,29 @@ return view.extend({
  render:function(settings) {
   var d=settings.direct_proxy || {bind:'',port:1080};
   return E('div',{class:'flr-page'},[
-   flr.style(),E('h2',{},'Выбор VPN-подключений'),
-   E('p',{},'На странице «Прокси» доступны три режима: «Авто» следует порядку всех протоколов и подключений; «Только протокол» выбирает внутри него; «Конкретное подключение» сохраняет ручной выбор даже при отказе. Группы Backup/Main — ваши метки VPS, а не скрытые правила fallback.'),
-   E('p',{},'Приоритет задаётся отдельно для протоколов и подключений внутри каждого. AWG и HY2 можно поставить на любое место. Новый порядок действует при следующем выборе; здоровое соединение сохраняется, пока вы явно не включите пересмотр.'),
-   E('p',{},'AWG деградирует при устойчивых ошибках или замедлении у двух провайдеров проверок. Отказ одного провайдера не вызывает переключение. Возврат требует быстрых успешных проверок обоих провайдеров не менее 60 с и допустимого приоритета. Измеряется время HTTPS/DNS; это не доказательство ограничения со стороны провайдера.'),
-   E('p',{},'Файлы AWG с Table=off принимаются: маршрутизацией управляет FLR. Импорт JSON, URI, base64 и AWG ограничен полным веб-конвертом 64 КиБ; подписки до 1 МиБ загружаются через HTTPS URL. Старые ключи и приватные конфиги не выводятся. Проверка подключения кратковременно меняет VPN-путь, затем восстанавливает исходный выбор.'),
-   E('p',{},'После возврата на AWG здоровый уже использованный резерв остаётся включённым: старые TCP/UDP-сессии продолжают идти через него, новые получают выбранный маршрут. Повторный отказ AWG использует этот же резерв. При замене или удалении подключения, ручной смене режима, полном отказе канала либо остановке службы его сессии могут прерваться. Холодный резерв при первоначально здоровом AWG заранее не запускается.'),
-   E('p',{},'В «Прокси» показаны фактический маршрут новых соединений, сохранённый резерв и давность последнего измерения. Пропущенная проверка не означает отказ. Диагностика WAN выполняется отдельно и не выбирает VPN-путь.'),
-   E('p',{},'История хранит до 720 раундов и 256 событий в RAM, максимум 4 МиБ. Записываются идентификаторы, измерения и исходы применения; ключи, конфиги и вывод команд не сохраняются. Перезапуск службы начинает новую историю. «Скачать диагностику» требует права записи и выдаёт ограниченные страницы. Если во время загрузки история изменилась, повторите скачивание.'),
-   E('h2',{},'qBittorrent — direct через WAN'),
-   E('p',{},'Mac 5.2.3: qBittorrent → Preferences / Settings → Connection → Proxy Server. PC: Tools → Options → Connection. Названия переведённых пунктов могут отличаться.'),
+   flr.style(),E('h2',{},_('Choosing VPN connections')),
+   E('p',{},_('The "Proxy" page offers three modes: "Auto" follows the order of all protocols and connections; "Protocol only" chooses within one protocol; "Specific connection" keeps the manual choice even when it fails. The Backup/Main groups are your VPS labels, not hidden fallback rules.')),
+   E('p',{},_('Priority is set separately for protocols and for the connections within each. AWG and HY2 can take any place. A new order takes effect at the next choice; a healthy connection stays until you explicitly ask for re-evaluation.')),
+   E('p',{},_('AWG counts as degraded on sustained errors or slowdowns at both probe providers. A failure of one provider does not cause a switch. Returning needs fast successful probes at both providers for at least 60 s and an eligible priority. HTTPS/DNS timing is measured; it is no proof of throttling by the ISP.')),
+   E('p',{},_('AWG files with Table=off are accepted: FLR manages routing. JSON, URI, base64 and AWG imports are limited by the 64 KiB web envelope; subscriptions up to 1 MiB load through an HTTPS URL. Old keys and private configs are not shown. A connection test briefly changes the VPN path and then restores the original choice.')),
+   E('p',{},_('After the return to AWG a healthy reserve that was in use stays on: old TCP/UDP sessions keep going through it, new ones get the chosen route. A repeated AWG failure uses the same reserve. Replacing or deleting the connection, a manual mode change, a complete channel failure or a service stop can interrupt its sessions. A cold reserve is not started in advance while AWG has been healthy from the start.')),
+   E('p',{},_('"Proxy" shows the actual route of new connections, the retained reserve and the age of the last measurement. A skipped probe does not mean a failure. WAN diagnostics run separately and do not choose the VPN path.')),
+   E('p',{},_('The history keeps up to 720 rounds and 256 events in RAM, at most 4 MiB. IDs, measurements and apply outcomes are recorded; keys, configs and command output are not stored. A service restart starts a new history. "Download diagnostics" needs write permission and returns bounded pages. If the history changes during the download, repeat it.')),
+   E('h2',{},_('qBittorrent — direct via WAN')),
+   E('p',{},_('Mac 5.2.3: qBittorrent → Preferences / Settings → Connection → Proxy Server. PC: Tools → Options → Connection. Translated item names may differ.')),
    E('ol',{},[
-    E('li',{},['Type: SOCKS5; Host: '+(d.bind || 'адрес роутера в LAN')+'; Port: '+d.port+'; Authentication: выключена.']),
-    E('li',{},'Включите «Perform hostname lookup via proxy» (DNS через прокси).'),
-    E('li',{},'Включите «Use proxy for BitTorrent purposes» и внутри него «Use proxy for peer connections». Иначе соединения с пирами могут обходить SOCKS.'),
-    E('li',{},'Если версия клиента предлагает запрет неподдерживаемых/непроксируемых соединений или fallback, включите запрет. В интерфейсе 5.2.3 отдельного старого флажка нет; SOCKS-настройки не доказывают охват каждого пакета.'),
-    E('li',{},'Для консервативного режима SOCKS выбирайте TCP, выключите DHT, PeX, LSD и UPnP/NAT-PMP; не настраивайте входящее перенаправление портов. Это уменьшает непроксируемые пути, но не создаёт гарантию всех пакетов.')
+    E('li',{},[_('Type: SOCKS5; Host: %s; Port: %s; Authentication: off.').format(d.bind || _('router LAN address'),d.port)]),
+    E('li',{},_('Enable "Perform hostname lookup via proxy" (DNS through the proxy).')),
+    E('li',{},_('Enable "Use proxy for BitTorrent purposes" and within it "Use proxy for peer connections". Otherwise peer connections can bypass SOCKS.')),
+    E('li',{},_('If your client version offers to block unsupported/unproxied connections or fallback, enable the block. The 5.2.3 interface has no separate old checkbox; SOCKS settings do not prove that every packet is covered.')),
+    E('li',{},_('For a conservative SOCKS setup choose TCP, disable DHT, PeX, LSD and UPnP/NAT-PMP, and do not configure inbound port forwarding. This reduces unproxied paths but does not guarantee every packet.'))
    ]),
-   E('p',{},'UDP ASSOCIATE поддерживается для IPv4: размер до 4096 байт, FRAG=0, один владелец на IP, до 32 назначений с удалением неактивного через 60 секунд. При закрытии управляющего TCP закрывается UDP. DHT/uTP/UDP-трекеры зависят от версии libtorrent и клиента; подтвердите отдельно или оставьте TCP.'),
-   E('p',{},'SOCKS CONNECT не принимает входящие P2P-соединения. DHT/PeX/LSD, входящие соединения, DNS, RSS и служебные запросы нельзя считать покрытыми одним флажком. IPv6-назначения SOCKS отклоняются.'),
-   E('p',{},'Для более сильной гарантии выберите «Настройки → Маршрут устройства → Direct» для IP Mac/PC: весь маршрутизируемый IPv4 устройства идёт через WAN и не уходит через VPS. Закрепите DHCP-адрес. Для IPv6 отключите IPv6 на устройстве; VPN-политика не даёт ему direct-гарантию.'),
-   E('p',{},'Правила по доменам торрентов не распознают всех пиров и не защищают весь P2P-трафик. Остановите SOCKS и проверьте поведение клиента, затем проверьте маршрут по WAN/VPN-счётчикам. Эти проверки на вашем роутере ещё не выполнены.'),
-   E('p',{},'При ошибке проверьте «Обзор», состояние контроллера, слушателя и компонентов. Импорт профиля не активирует VPN. Не подтверждайте откат до проверки LAN, WAN, VPN и direct.'),
-   E('p',{},[E('a',{href:'https://github.com/qbittorrent/qBittorrent/blob/release-5.2.3/src/gui/optionsdialog.ui',target:'_blank',rel:'noopener'},'Официальные названия настроек qBittorrent 5.2.3')])
+   E('p',{},_('UDP ASSOCIATE is supported for IPv4: up to 4096 bytes, FRAG=0, one owner per IP, up to 32 destinations with an idle one removed after 60 seconds. Closing the controlling TCP connection closes UDP. DHT/uTP/UDP trackers depend on the libtorrent and client version; verify them separately or stay with TCP.')),
+   E('p',{},_('SOCKS CONNECT does not accept inbound P2P connections. DHT/PeX/LSD, inbound connections, DNS, RSS and service requests cannot be considered covered by one checkbox. IPv6 SOCKS destinations are refused.')),
+   E('p',{},_('For a stronger guarantee choose "Settings → Device route → Direct" for the Mac/PC IP: all routed IPv4 of the device goes through the WAN and never through the VPS. Pin its DHCP address. For IPv6 disable IPv6 on the device; the VPN policy gives it no direct guarantee.')),
+   E('p',{},_('Rules by torrent domains do not recognize every peer and do not protect all P2P traffic. Stop SOCKS and check how the client behaves, then check the route with the WAN/VPN counters. These checks have not been run on your router yet.')),
+   E('p',{},_('On an error check "Overview" and the state of the controller, the listener and the components. Importing a profile does not activate the VPN. Do not confirm the rollback before checking LAN, WAN, VPN and direct.')),
+   E('p',{},[E('a',{href:'https://github.com/qbittorrent/qBittorrent/blob/release-5.2.3/src/gui/optionsdialog.ui',target:'_blank',rel:'noopener'},_('Official qBittorrent 5.2.3 setting names'))])
   ]);
  },handleSave:null,handleSaveApply:null,handleReset:null
 });

@@ -71,6 +71,7 @@
     "bind-dig",
     "flr-runtime",
     "luci-app-flr",
+    "luci-i18n-flr-ru",
     "flint-xray",
     "flint-wstunnel",
     "flint-zapret2",
