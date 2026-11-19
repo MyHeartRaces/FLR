@@ -640,7 +640,7 @@ none) and the custom rules; it is built deterministically and cut into
 32 KiB base64 chunks, and a later chunk names the `sha256` of the first reply,
 so a change in between is refused. An import may carry the policy with all
 eight rulesets, the custom rules, or both; a bare custom rules file is also
-accepted. Chunks are staged in `/tmp/flr-routing-import` (0700, one import at
+accepted. Chunks are staged in `/var/run/flr-runtime/routing-import` (0700, owned by the controller, one import at
 a time; `begin` drops any other staged import, one hour expiry) and must
 arrive in order. `commit` checks size and SHA-256, validates everything,
 writes the candidate overlay into a temporary directory next to

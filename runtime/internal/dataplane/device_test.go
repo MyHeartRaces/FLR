@@ -21,7 +21,7 @@ func TestDirectOverridesAffinityAndClassifiesIncomingReplies(t *testing.T) {
 	}
 	// These are the emitted classifier decisions for established marked outgoing
 	// packets and unmarked replies to already permitted WAN DNAT connections.
-	rules := []string{"meta mark & 0x80000000 != 0 return", "ip daddr @local4 return", "ip saddr @profile_pending4 counter drop", "ip saddr @profile_direct4 goto profile_direct", "ct mark & 0xff800000 != 0 jump restore", "ct mark & 0xff800000 != 0 return", "ip saddr @profile_general4 goto profile_general", "ct state != new ip saddr != @profile_games4 return"}
+	rules := []string{"meta mark & 0x80000000 != 0 return", "ip daddr @local4 ct mark & 0xff800000 == 0 return", "ip saddr @profile_pending4 counter drop", "ip saddr @profile_direct4 goto profile_direct", "ct mark & 0xff800000 != 0 jump restore", "ct mark & 0xff800000 != 0 return", "ip saddr @profile_general4 goto profile_general", "ct state != new ip saddr != @profile_games4 return"}
 	previous := -1
 	for _, rule := range rules {
 		index := strings.Index(batch.Nft, rule)

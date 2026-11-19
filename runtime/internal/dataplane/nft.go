@@ -207,7 +207,7 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 		fmt.Fprintf(&s, "  ct mark & %#08x != 0 meta mark set meta mark | %#08x\n  ct mark & %#08x == 0 meta mark set meta mark & %#08x\n", mask, mask, mask, ^mask)
 	}
 	s.WriteString(" }\n")
-	s.WriteString(" chain classify {\n  meta mark & 0x80000000 != 0 return\n  ip daddr @local4 return\n  ip saddr @profile_pending4 counter drop\n  ip saddr @profile_direct4 goto profile_direct\n  ct mark & 0xff800000 != 0 jump restore\n  ct mark & 0xff800000 != 0 return\n  ip saddr @profile_general4 goto profile_general\n  ct state != new ip saddr != @profile_games4 return\n")
+	s.WriteString(" chain classify {\n  meta mark & 0x80000000 != 0 return\n  ip daddr @local4 ct mark & 0xff800000 == 0 return\n  ip saddr @profile_pending4 counter drop\n  ip saddr @profile_direct4 goto profile_direct\n  ct mark & 0xff800000 != 0 jump restore\n  ct mark & 0xff800000 != 0 return\n  ip saddr @profile_general4 goto profile_general\n  ct state != new ip saddr != @profile_games4 return\n")
 	assign := func(c contract.Class) {
 		fmt.Fprintf(&s, "ct mark set (ct mark & 0x007fffff) | %#08x goto selected\n", contract.ClassMark(c))
 	}

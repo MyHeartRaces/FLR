@@ -54,7 +54,7 @@ func TestCustomRulesRenderAsSetsMatchedBeforeLists(t *testing.T) {
 	if !strings.Contains(b.Nft, " set custom_vpn4 { type ipv4_addr; flags interval; auto-merge; elements = { 17.1.0.0/23, 17.1.2.0/31, 17.1.2.2/32, ") {
 		t.Fatalf("custom vpn set must exclude the more specific direct address:\n%s", b.Nft)
 	}
-	order := []string{"ip daddr @local4 return", "ct mark & 0xff800000 != 0 jump restore", "ip daddr @custom_vpn4 ", "ip daddr @custom_direct4 ", "ip daddr @required4 ", "ip daddr @essential4 ", "ip daddr @service_static4 ", "ip daddr @broad_direct4 "}
+	order := []string{"ip daddr @local4 ct mark & 0xff800000 == 0 return", "ct mark & 0xff800000 != 0 jump restore", "ip daddr @custom_vpn4 ", "ip daddr @custom_direct4 ", "ip daddr @required4 ", "ip daddr @essential4 ", "ip daddr @service_static4 ", "ip daddr @broad_direct4 "}
 	previous := -1
 	for _, rule := range order {
 		index := strings.Index(b.Nft, rule)
