@@ -19,7 +19,10 @@ ProtectHome=true
 PrivateTmp=true
 NoNewPrivileges=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
+# Not ProtectKernelModules: it hides /lib/modules, and the kernel gate must
+# read it to tell whether the newest kernel has an AmneziaWG module. Loading
+# modules stays impossible without CAP_SYS_MODULE.
+CapabilityBoundingSet=~CAP_SYS_MODULE
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

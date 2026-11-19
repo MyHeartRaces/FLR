@@ -566,6 +566,21 @@ class TestKernelGate(Base):
         with redirect_stdout(io.StringIO()):
             self.assertEqual(eu.main(["--config", self.cfg_path, "gate"], self.host, self.net), 0)
 
+    def test_hidden_module_tree_is_unknown_not_unsafe(self):
+        # A sandbox that hides /lib/modules (ProtectKernelModules) shows no
+        # kernels at all; that is "cannot judge", not "newest lacks AWG".
+        rep = eu.kernel_gate(self.cfg["gate"])
+        self.assertIsNone(rep["safe_to_reboot"])
+        self.assertIn("no kernels visible", rep["error"])
+        self.assertNotIn("suggestion", rep)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(eu.main(["--config", self.cfg_path, "gate"], self.host, self.net), eu.EXIT_UNSAFE)
+
+    def test_service_unit_keeps_module_tree_visible(self):
+        unit = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "flr-engine-update.service")).read()
+        self.assertNotIn("ProtectKernelModules=true", unit)
+        self.assertIn("CapabilityBoundingSet=~CAP_SYS_MODULE", unit)
+
     def test_numeric_ordering(self):
         self.kernel("6.9.0-1-amd64", "updates/dkms/amneziawg.ko")
         self.kernel("6.12.0-1-amd64")

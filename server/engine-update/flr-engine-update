@@ -544,6 +544,12 @@ def kernel_gate(g, running=None):
            "newest": newest["version"] if newest else None,
            "reboot_required": os.path.exists(g["reboot_required_path"]),
            "safe_to_reboot": safe}
+    if not kernels:
+        # No kernel visible at all means the gate cannot see the module tree
+        # (for example a sandbox hiding it), not that the next boot lacks AWG.
+        rep["safe_to_reboot"] = None
+        rep["error"] = "no kernels visible under %s; cannot judge reboot safety" % root
+        return rep
     if not safe:
         k = newest["version"] if newest else "<none>"
         rep["suggestion"] = ("NOT EXECUTED by this tool; the owner may run, after review: "
@@ -1077,7 +1083,9 @@ def main(argv=None, host=None, net=None):
                 rep, code = u.run_cycle(apply=cfg["mode"] == "apply")
                 g = kernel_gate(cfg["gate"], u.host.uname_release())
                 rep["kernel_gate"] = {k: g[k] for k in ("newest", "reboot_required", "safe_to_reboot")}
-                if not g["safe_to_reboot"]:
+                if g["safe_to_reboot"] is None:
+                    log("WARNING: %s" % g["error"])
+                elif not g["safe_to_reboot"]:
                     log("WARNING: newest kernel %s has no AWG module; do not reboot (run 'gate')" % g["newest"])
             elif args.cmd == "hold" or args.cmd == "unhold":
                 u.st["hold"] = args.cmd == "hold"
