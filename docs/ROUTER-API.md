@@ -652,6 +652,98 @@ stored list. `routing-reset` moves the overlay to the backup (the image
 policy applies; custom rules stay); `routing-restore-backup` swaps the backup
 back. The backup is kept across sysupgrade.
 
+### RoscomVPN import
+
+LuCI «FLR → Routing → Import & export → RoscomVPN routing profile» turns a
+RoscomVPN routing profile (the Happ/INCY JSON published in
+`hydraponique/roscomvpn-routing`, an edited copy of it, or its
+`happ://routing/onadd/<base64>` / `incy://…` link) into the private policy
+overlay. It runs only when the owner starts it: no start, upgrade or
+migration path calls it, an existing overlay is never replaced on its own,
+and an imported overlay is an ordinary overlay (same files, kept across
+sysupgrade, shown, exported, reset and restored like any other).
+
+| Operation | Permission | `routing` arguments | Successful `data` |
+| --- | --- | --- | --- |
+| `routing-roscomvpn-import` | write | exactly one of `url` (HTTPS, port 443, no credentials) or `staging_id` (a profile uploaded with `routing-import-begin`/`-chunk`, at most 1 MiB); `dry_run?`; `accepted:true` unless `dry_run` | controller running: `{pending:true, job, dry_run, download_path}`; offline: the result below with `pending:false` |
+| `routing-roscomvpn-status` | read | none | `{job:null}` or `{job:{id, pending, phase, dry_run, started, finished?, error?, result?}}` |
+
+`result` is `{dry_run, installed, download_path, source, data:{geosite?, geoip?:{url, bytes, sha256, categories}}, report, timings:{profile_ms?, geosite_ms?, geoip_ms?, convert_ms, install_ms?, total_ms}, apply?, backup_present?}`;
+`report` is `{name, rulesets:{<name>:{counts, total, imported}}, categories:[{list, name, entries}], skipped:[{field, reason, count, examples?}], not_applied:[…same…], notes:[…], total_imported}`.
+`phase` runs `queued`, `downloading profile`, `downloading geosite`,
+`downloading geoip`, `converting`, `installing`, then `done` or `failed`.
+One job at a time; a dry run (`Preview`) downloads and converts but changes
+nothing.
+
+**Install** is the bundle import path: the converted policy.json and eight
+rulesets are staged next to the overlay, loaded with the controller's loader,
+the current overlay becomes `/etc/flr-runtime/policy.backup` («Restore
+backup» brings it back), and the result is applied live to new connections.
+Custom rules are untouched. A failure at any step changes nothing.
+
+**Mapping** (list entries use Xray syntax; category names compare
+case-insensitively; `geosite:name@attr` keeps domains with the attribute,
+`@!attr` drops them):
+
+| Profile | FLR |
+| --- | --- |
+| `DirectSites` | `roscom-direct-domains` (applies in routing mode `split` only) |
+| `DirectIp` | `roscom-direct-ips` (IPv4; split only) |
+| `ProxySites` | `vpn-required` (wins over every direct list) |
+| `ProxyIp` | `vpn-services` addresses (static VPN set, matched before the broad direct set) |
+| `geosite:private` / `geoip:private` in the direct lists | added to `local-domains` / `local-ips`; the image's local defaults are kept |
+| geosite `RootDomain`, `domain:x` | `domain_suffix` |
+| geosite `Full`, `full:x` | `domain` (exact) |
+| geosite `Plain`, `keyword:x`, a bare entry | `domain_keyword` (substring: Xray matches a bare entry as a substring) |
+| geosite `Regex`, `regexp:x` | `domain_regex` (Go RE2, the engine Xray uses) |
+| IP, CIDR | `ip_cidr` |
+
+Skipped and counted in `report.skipped`: IPv6 addresses (FLR routes IPv4
+only), `geoip:!x` and reverse-match categories, `ext:` files, unknown
+prefixes, non-punycode names, invalid regexps, categories missing from the
+data file, private categories in the proxy lists. Reported in
+`report.not_applied` with a reason: `BlockSites`/`BlockIp` (FLR does not
+block; the destinations follow the other lists), `DnsHosts`, the DNS server
+fields (FLR's DoH inside the VPN and its direct resolver are used),
+`FakeDNS:true`, `DomainStrategy` (FLR always matches the name first, then for
+unlisted names the resolved IPv4 address, i.e. `IPIfNonMatch`), a
+`RouteOrder` other than `block-proxy-direct` (FLR's fixed order), and
+`GlobalProxy:false` (unlisted destinations still go through the VPN). One
+difference from Xray: an address in `ProxyIp` goes through the VPN even when
+its name is in `DirectSites`.
+
+**Downloads.** The controller downloads the profile (URL case) and the
+`Geositeurl` and `Geoipurl` files the applied lists use, over HTTPS only
+(redirects must stay HTTPS on port 443, at most five; TLS verifies the host;
+literal and resolved addresses must be public IPv4). While the VPN runs they
+go through its active channel only: AWG bound to `flr_awg` with DNS through
+the tunnel (the engine updater's path), Hysteria2 and VLESS through their
+local SOCKS listener; if the VPN runs with no channel up the import is
+refused rather than sent through the ISP. The published files are on
+jsDelivr and GitHub, which Russian ISPs often block, and the ISP should not
+see the request. Without a running VPN (first setup, VPN off, offline CLI)
+they go through the WAN like a subscription download (1.1.1.1 over the WAN).
+
+**Limits.** Profile 1 MiB, 10000 entries per list; each data file 32 MiB
+(the RoscomVPN files measured 2026-11-19: geosite.dat 68 KB with 24
+categories, geoip.dat 440 KB with 3; `geoip:direct` has 37109 IPv4 CIDRs, the
+largest list the published profiles produce); 250000 entries per ruleset,
+2048 keyword and 256 regexp matchers in the whole overlay (the DNS broker
+checks those one by one for every new name); the converted policy must fit
+the 16 MiB export bundle together with the largest custom rules list. The
+decoder checks every varint and length and caps categories (65536) and
+entries (8 Mi) per file. Timeouts: profile 20 s, each data file 90 s, the
+whole job 4 minutes.
+
+**Locking.** With the controller running the import is a background job:
+downloads and the conversion hold no controller lock, so controller rounds,
+health probes and failover continue; only the install step takes the
+administrative lock, for as long as a bundle import of the same size
+(seconds at most for the published profiles; it was not timed on a
+router). LuCI polls `routing-roscomvpn-status` once a second. Offline (no
+controller) the import runs within the request; the typical duration is a
+few seconds.
+
 ### Tunnel queueing (CAKE)
 
 `settings` reports `tunnel_qos`; a patch needs the complete object

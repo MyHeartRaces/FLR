@@ -73,7 +73,7 @@ func (r APIRequest) Write() bool {
 	switch r.Operation {
 	case "status", "profiles", "help", "capabilities", "connection-list", "diagnostics":
 		return false
-	case "routing-policy", "routing-entries", "routing-rules":
+	case "routing-policy", "routing-entries", "routing-rules", "routing-roscomvpn-status":
 		return false
 	case "settings":
 		return len(r.Settings) != 0
@@ -136,7 +136,7 @@ func ParseAPI(raw []byte, rpc, readOnly bool) (APIRequest, error) {
 	// Routing policy operations take their arguments in one object. The
 	// export returns the private routing lists, so like connection-export it
 	// is not a read and the read-only method refuses it.
-	for _, name := range []string{"routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup"} {
+	for _, name := range []string{"routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup", "routing-roscomvpn-import", "routing-roscomvpn-status"} {
 		permitted[name] = map[string]bool{"routing": true}
 	}
 	fields, ok := permitted[r.Operation]
@@ -243,7 +243,7 @@ func ParseAPI(raw []byte, rpc, readOnly bool) (APIRequest, error) {
 		if len(r.Settings) > 0 && (bytes.Equal(r.Settings, []byte("null")) || r.Settings[0] != '{') {
 			return r, fmt.Errorf("settings must be object")
 		}
-	case "routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup":
+	case "routing-policy", "routing-entries", "routing-rules", "routing-rule-add", "routing-rule-update", "routing-rule-delete", "routing-apply", "routing-export", "routing-import-begin", "routing-import-chunk", "routing-import-commit", "routing-import-abort", "routing-reset", "routing-restore-backup", "routing-roscomvpn-import", "routing-roscomvpn-status":
 		if len(r.Routing) > 0 && (!apiObject(r.Routing) || CheckJSON(r.Routing) != nil) {
 			return r, fmt.Errorf("routing arguments must be an object")
 		}

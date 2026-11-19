@@ -49,6 +49,7 @@ function base64ToBytes(text) {
  var binary=atob(text),out=new Uint8Array(binary.length);for(var i=0;i<binary.length;i++)out[i]=binary.charCodeAt(i);return out;
 }
 var maxRoutingBundle=16*1024*1024;
+function sleep(ms){return new Promise(function(resolve){setTimeout(resolve,ms);});}
 var fieldSequence=0;
 return baseclass.extend({
  families:families,
@@ -171,8 +172,10 @@ return baseclass.extend({
   if(sha256hex(all)!==sum)throw new Error(_('The export checksum does not match; start it again.'));
   return {bytes:all,filename:/^[A-Za-z0-9_.-]{1,100}$/.test(page.filename || '')?page.filename:'flr-routing.json',source:page.source};
  },
- // Chunked import: begin with size and SHA-256, ordered chunks, commit.
- importRouting:async function(bytes,progress) {
+ // Chunked upload: begin with size and SHA-256, ordered chunks, then
+ // finish(staging_id) (commit, or the RoscomVPN import); a failure drops the
+ // staged upload.
+ stageRouting:async function(bytes,progress,finish) {
   if(!bytes || !bytes.length || bytes.length>maxRoutingBundle)throw new Error(_('The file is empty or larger than 16 MiB.'));
   var begin=await this.routing('routing-import-begin',{size:bytes.length,sha256:sha256hex(bytes)},true),id=begin && begin.staging_id,chunk=begin && begin.chunk_bytes;
   if(!/^[0-9a-f]{16}$/.test(id || '') || !Number.isSafeInteger(chunk) || chunk<1)throw new Error(_('FLR returned no valid reply. Check the service and retry.'));
@@ -181,11 +184,29 @@ return baseclass.extend({
     await this.routing('routing-import-chunk',{staging_id:id,offset:offset,data:bytesToBase64(bytes.subarray(offset,offset+chunk))},true);
     if(progress)progress(Math.min(offset+chunk,bytes.length),bytes.length);
    }
-   return await this.routing('routing-import-commit',{staging_id:id},true);
+   return await finish(id);
   } catch(e) {
    try{await this.routing('routing-import-abort',{staging_id:id},true);}catch(ignored){}
    throw e;
   }
+ },
+ importRouting:async function(bytes,progress) {
+  var self=this;
+  return this.stageRouting(bytes,progress,function(id){return self.routing('routing-import-commit',{staging_id:id},true);});
+ },
+ // RoscomVPN import (url or staging_id, dry_run, accepted). With the
+ // controller running it is a job: poll its status until it finishes.
+ roscomvpn:async function(args,phase) {
+  var start=await this.routing('routing-roscomvpn-import',args,true);
+  if(!start || start.pending!==true)return start;
+  for(var i=0;i<600;i++) {
+   await sleep(1000);
+   var job=(await this.routing('routing-roscomvpn-status',null) || {}).job;
+   if(!job || job.id!==start.job)throw new Error(_('The import status was lost. Check the routing overview.'));
+   if(phase)phase(job.phase);
+   if(!job.pending){if(job.error)throw new Error(String(job.error));return job.result;}
+  }
+  throw new Error(_('The import is taking too long. Check the routing overview later.'));
  },
  // What a routing change did to the running router, as one line of text.
  applyText:function(apply) {
