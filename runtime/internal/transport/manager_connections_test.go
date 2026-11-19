@@ -282,3 +282,74 @@ func TestUnconfirmedNativeRollbackCannotMeasureOrPublishPreviousIdentity(t *test
 		t.Fatal("successful known reinstall did not restore trustworthy identity", s)
 	}
 }
+
+func TestNativeCleanupFailureRetriesMainBeforeSelectingSpare(t *testing.T) {
+	t.Run("transient failure", func(t *testing.T) {
+		testNativeCleanupFailure(t, 1, "main")
+	})
+	t.Run("persistent failure", func(t *testing.T) {
+		testNativeCleanupFailure(t, 3, "reserve")
+	})
+}
+
+func testNativeCleanupFailure(t *testing.T, failures int, want string) {
+	t.Helper()
+	main := managedConnection(t, "awg", "main", 10)
+	spare := managedConnection(t, "awg", "spare", 11)
+	reserve := managedConnection(t, "hy2", "reserve", 12)
+	registry := &connection.Registry{Version: 2, Connections: []connection.Connection{main, spare, reserve}}
+	order := connection.DefaultOrder(registry)
+	awg := &fakeAWG{good: map[string]bool{"main": true, "spare": true}}
+	backend := &fakeBackend{}
+	manager := New(backend, func(context.Context, profile.Profile) health.Result {
+		return health.Result{TCP: true, UDP: true}
+	}, func() error { return nil })
+	manager.SetAWGBackend(awg)
+	var attempts int
+	manager.SetChannelCleanup(func(channel contract.Channel, _ string) error {
+		if channel == contract.AWG {
+			attempts++
+			if attempts <= failures {
+				return fmt.Errorf("AWG conntrack unavailable")
+			}
+		}
+		return nil
+	})
+
+	now := time.Unix(100, 0)
+	step := func() Snapshot {
+		snapshot := manager.StepConnections(context.Background(), now, registry, connection.Selection{Mode: "auto"}, order, 1)
+		now = now.Add(health.Interval)
+		return snapshot
+	}
+	s := step()
+	if !s.Pending || s.ActiveConnection != nil || len(awg.switches) != 0 {
+		t.Fatalf("first cleanup failure must leave the AWG mark unused, got pending=%v active=%v switches=%v", s.Pending, s.ActiveConnection, awg.switches)
+	}
+	s = step()
+	if s.ActiveConnection == nil || s.ActiveConnection.ID != want {
+		t.Fatalf("after retry: wanted %s, got %v (switched %v)", want, s.ActiveConnection, awg.switches)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected exactly two cleanup attempts, got %d", attempts)
+	}
+	if want == "main" {
+		s = step()
+		if s.ActiveConnection == nil || s.ActiveConnection.ID != "main" || attempts != 2 || strings.Join(awg.switches, ",") != "main" {
+			t.Fatalf("healthy Main was disturbed: active=%v cleanups=%d switches=%v", s.ActiveConnection, attempts, awg.switches)
+		}
+		return
+	}
+	if len(awg.switches) != 0 {
+		t.Fatalf("AWG mark reused after cleanup failed: %v", awg.switches)
+	}
+	stops := backend.stops
+	s = step()
+	if s.ActiveConnection == nil || s.ActiveConnection.ID != "reserve" || !backend.alive || backend.stops != stops || len(awg.switches) != 0 {
+		t.Fatalf("ongoing AWG cleanup failure disturbed the reserve: active=%v switches=%v", s.ActiveConnection, awg.switches)
+	}
+	s = step()
+	if s.ActiveConnection == nil || s.ActiveConnection.ID != "main" || !backend.alive || backend.stops != stops {
+		t.Fatalf("AWG failed to recover without disturbing the reserve: active=%v reserve alive=%v", s.ActiveConnection, backend.alive)
+	}
+}

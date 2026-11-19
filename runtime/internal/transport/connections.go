@@ -22,6 +22,8 @@ type connectionState struct {
 	native *connection.Connection
 	health map[string]health.State
 	cursor string
+	// nativeCleanupRetry is the candidate owed one retry before skipping the AWG family.
+	nativeCleanupRetry string
 	// warm marks a slot started as a standby that has not carried new flows.
 	// Its failures back off in warmRetries, which the failover sweep ignores.
 	warm        bool
@@ -170,6 +172,7 @@ func (m *Manager) selectConnection(c connection.Connection, state health.State, 
 		m.connectionState().readvance = c.Family != "awg" && (m.connectionState().native != nil || m.connectionState().awgSkipped)
 	}
 	m.connectionState().awgSkipped = false
+	m.connectionState().nativeCleanupRetry = ""
 	if c.Family == "awg" {
 		channel = contract.AWG
 		m.state.AWG = state
@@ -271,6 +274,7 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 	changed := m.state.Generation != generation || m.state.Requested != selection
 	if changed {
 		s.cursor = ""
+		s.nativeCleanupRetry = ""
 		// A new explicit choice is allowed to retire the previous resources. Merely
 		// changing priority metadata keeps the same intent generation and affinity.
 		if (s.active != nil || s.slot != nil || s.admission != nil || s.quarantine) && !m.clearConnection() {
@@ -424,7 +428,14 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 		adm.cancel()
 	}
 	slotChecked, slotFree := false, false
+	awgCleanupFailed := false
 	for _, c := range candidates[start:] {
+		if awgCleanupFailed && c.Family == "awg" {
+			// Advance even if this round ran out of time, so the next round
+			// can start with the proxy instead of trying the same AWG mark.
+			s.cursor = connectionKey(c)
+			continue
+		}
 		if ctx.Err() != nil || !m.freshGeneration(generation) {
 			break
 		}
@@ -442,9 +453,20 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 			if s.native == nil || connectionKey(*s.native) != key || !s.awg.Present() {
 				if err := m.cleanupChannel(contract.AWG, "native_replacement"); err != nil {
 					m.state.LastError = "native cleanup failed"
-					m.state.Pending = true
-					return m.state
+					if s.nativeCleanupRetry != key {
+						s.nativeCleanupRetry = key
+						s.cursor = previous
+						m.state.Pending = true
+						return m.state
+					}
+					// All AWG profiles share this mark. Keep it out of the
+					// sweep and let the independently owned proxy take over.
+					s.nativeCleanupRetry = ""
+					s.awgSkipped = true
+					awgCleanupFailed = true
+					continue
 				}
+				s.nativeCleanupRetry = ""
 				err := s.awg.Switch(ctx, c)
 				m.recordOperation("native_replacement", "native", contract.AWG, &c, err)
 				m.resetRoam()
