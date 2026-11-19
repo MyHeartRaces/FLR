@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/control"
@@ -34,7 +35,7 @@ import (
 var (
 	// routingImageDir and routingStagingRoot are replaced in tests.
 	routingImageDir    = policy.ImageDir
-	routingStagingRoot = "/tmp/flr-routing-import"
+	routingStagingRoot = "/var/run/flr-runtime/routing-import"
 )
 
 const (
@@ -181,6 +182,10 @@ func (c *Controller) writeCustomRules(rules *policy.CustomRules) error {
 	raw, e := json.MarshalIndent(rules, "", " ")
 	if e != nil {
 		return e
+	}
+	// The reader refuses larger files, so a larger list must not be saved.
+	if len(raw)+1 > maxCustomRulesBytes {
+		return fmt.Errorf("custom rules exceed %d bytes; shorten comments or remove rules", maxCustomRulesBytes)
 	}
 	if e = privatefile.Write(c.customRulesPath(), append(raw, '\n')); e != nil {
 		return fmt.Errorf("custom rules could not be saved: %v", e)
@@ -646,6 +651,17 @@ func prepareStagingRoot() error {
 	if e := os.MkdirAll(routingStagingRoot, 0700); e != nil {
 		return fmt.Errorf("import staging unavailable")
 	}
+	// The directory must be ours: a directory another user created could
+	// let that user read or swap the staged file.
+	for _, dir := range []string{filepath.Dir(routingStagingRoot), routingStagingRoot} {
+		info, e := os.Lstat(dir)
+		if e != nil || !info.IsDir() {
+			return fmt.Errorf("import staging path unusable")
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Geteuid() {
+			return fmt.Errorf("import staging path unusable")
+		}
+	}
 	if e := os.Chmod(routingStagingRoot, 0700); e != nil {
 		return fmt.Errorf("import staging unavailable")
 	}
@@ -676,7 +692,7 @@ func (c *Controller) routingImportBegin(args routingArgs) (any, error) {
 	if e := privatefile.Write(metaPath, meta); e != nil {
 		return nil, fmt.Errorf("import staging unavailable")
 	}
-	f, e := os.OpenFile(partPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	f, e := os.OpenFile(partPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
 	if e != nil {
 		removeStaging(id)
 		return nil, fmt.Errorf("import staging unavailable")
@@ -723,7 +739,7 @@ func (c *Controller) routingImportChunk(args routingArgs) (any, error) {
 		return nil, fmt.Errorf("chunk exceeds the announced import size")
 	}
 	_, partPath := stagingPaths(args.Staging)
-	f, err := os.OpenFile(partPath, os.O_WRONLY|os.O_APPEND, 0)
+	f, err := os.OpenFile(partPath, os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return nil, fmt.Errorf("import staging unavailable")
 	}
@@ -825,7 +841,7 @@ func (c *Controller) stageOverlay(b *routingBundle) (string, error) {
 
 // installOverlay replaces the overlay with candidate and keeps the previous
 // overlay as the backup. It returns an undo function for a later failure.
-func (c *Controller) installOverlay(candidate string) (func(), error) {
+func (c *Controller) installOverlay(candidate string) (undo, keep func(), err error) {
 	overlay, backup := c.overlayDir(), c.overlayBackupDir()
 	for _, path := range []string{overlay, backup} {
 		if e := privatefile.SafePath(path); e != nil {
@@ -833,28 +849,52 @@ func (c *Controller) installOverlay(candidate string) (func(), error) {
 		}
 	}
 	had := exists(overlay)
+	// The old backup is set aside, not deleted, until the whole import has
+	// succeeded (keep), so a failed import loses no recovery point.
+	old := backup + ".old"
+	hadBackup := false
 	if had {
-		if e := os.RemoveAll(backup); e != nil {
-			return nil, fmt.Errorf("cannot replace the overlay backup")
+		if e := os.RemoveAll(old); e != nil {
+			return nil, nil, fmt.Errorf("cannot replace the overlay backup")
+		}
+		if exists(backup) {
+			if e := os.Rename(backup, old); e != nil {
+				return nil, nil, fmt.Errorf("cannot replace the overlay backup")
+			}
+			hadBackup = true
 		}
 		if e := os.Rename(overlay, backup); e != nil {
-			return nil, fmt.Errorf("cannot keep the previous overlay as a backup")
+			if hadBackup {
+				os.Rename(old, backup)
+			}
+			return nil, nil, fmt.Errorf("cannot keep the previous overlay as a backup")
 		}
 	}
 	if e := os.Rename(candidate, overlay); e != nil {
 		if had {
 			os.Rename(backup, overlay)
+			if hadBackup {
+				os.Rename(old, backup)
+			}
 		}
-		return nil, fmt.Errorf("cannot install the policy overlay")
+		return nil, nil, fmt.Errorf("cannot install the policy overlay")
 	}
 	privatefile.SyncDir(c.stateDir)
-	return func() {
+	undo := func() {
 		os.RemoveAll(overlay)
 		if had {
 			os.Rename(backup, overlay)
+			if hadBackup {
+				os.Rename(old, backup)
+			}
 		}
 		privatefile.SyncDir(c.stateDir)
-	}, nil
+	}
+	keep := func() {
+		os.RemoveAll(old)
+		privatefile.SyncDir(c.stateDir)
+	}
+	return undo, keep, nil
 }
 
 func (c *Controller) routingImportCommit(args routingArgs) (any, error) {
@@ -893,7 +933,7 @@ func (c *Controller) routingImportCommit(args routingArgs) (any, error) {
 	}
 	imported := map[string]any{"policy": candidate != ""}
 	if candidate != "" {
-		undo, e := c.installOverlay(candidate)
+		undo, keep, e := c.installOverlay(candidate)
 		if e != nil {
 			return nil, e
 		}
@@ -903,6 +943,7 @@ func (c *Controller) routingImportCommit(args routingArgs) (any, error) {
 				return nil, e
 			}
 		}
+		keep()
 	} else if err = c.writeCustomRules(bundle.CustomRules); err != nil {
 		return nil, err
 	}

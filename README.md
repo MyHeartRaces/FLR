@@ -17,6 +17,9 @@ latency in online games.
 - Session-preserving failover: healthy connections keep their channel, only new
   connections move; the reserve stays warm so switching is make-before-break.
 - DoH DNS inside the tunnel, no silent fallback to the ISP resolver.
+- Names routed directly (private overlay) resolve over Yandex DoH through the
+  WAN first, the ISP resolvers only as fallback, so the ISP can neither read
+  nor rewrite them.
 - Kill switch: when every channel is down the VPN class is blocked while local
   and direct traffic keep working.
 - One LuCI "Proxy" menu: auto, protocol-only or a specific connection, with

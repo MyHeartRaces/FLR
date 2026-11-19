@@ -110,6 +110,9 @@ func (b *Broker) ResolveClient(ctx context.Context, q *mdns.Msg, view View) (*md
 			return nil, e
 		}
 		r := r2.Copy()
+		// The CNAME is ours, not signed or served by an authority.
+		r.AuthenticatedData = false
+		r.Authoritative = false
 		r.Question = q.Question
 		r.Answer = append([]mdns.RR{cname}, r.Answer...)
 		r.Id = q.Id
