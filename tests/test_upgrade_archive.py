@@ -28,7 +28,7 @@ EXPECTED = {
     'policy/rulesets/direct-essential.json', 'policy/rulesets/game-platforms.json',
     'policy/rulesets/vpn-services.json', 'policy/rulesets/roscom-direct-domains.json',
     'policy/rulesets/roscom-direct-ips.json',
-    'custom-rules.json',
+    'custom-rules.json', 'dnsfilter',
     'policy.backup/policy.json', 'policy.backup/rulesets/local-domains.json',
     'policy.backup/rulesets/local-ips.json', 'policy.backup/rulesets/vpn-required.json',
     'policy.backup/rulesets/direct-essential.json', 'policy.backup/rulesets/game-platforms.json',
