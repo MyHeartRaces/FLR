@@ -241,6 +241,8 @@ func TestSocksCanary(t *testing.T) {
 	}
 	if r := canaryRun(t, srv, true, true, "listen"); !r.OK {
 		t.Fatalf("%+v", r)
+	} else if r.HTTPSBytes != 1<<20 || r.UDPAnswers != 3 || r.HTTPSMillis < 0 {
+		t.Fatalf("missing traffic measurements: %+v", r)
 	}
 	if r := canaryRun(t, srv, true, false, "drop-listener"); r.OK || r.Probe != "alive" {
 		t.Fatalf("child lost its listener during the download: %+v", r)

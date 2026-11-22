@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -24,6 +25,7 @@ func (s StaticRoute) DNSRoute(_ contract.Class) (contract.Channel, uint64) { ret
 
 type Broker struct {
 	pol       atomic.Pointer[policy.Policy]
+	policyMu  sync.RWMutex
 	routes    RouteProvider
 	mappings  MappingWriter
 	cache     *Cache
@@ -83,6 +85,9 @@ func (b *Broker) watchFilter(ctx context.Context, path string) {
 // Blocked names get NXDOMAIN; a rewritten name is answered as a CNAME to its
 // target followed by the target's records for the same type.
 func (b *Broker) ResolveClient(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg, error) {
+	if p := b.pol.Load(); p != nil && p.Bypass() {
+		return nil, fmt.Errorf("FLR DNS is suspended in Direct mode")
+	}
 	f := b.filter.Load()
 	if f == nil || len(q.Question) != 1 {
 		return b.Resolve(ctx, q, view)
@@ -95,6 +100,10 @@ func (b *Broker) ResolveClient(ctx context.Context, q *mdns.Msg, view View) (*md
 		r.RecursionAvailable = true
 		return r, nil
 	case FilterRewrite:
+		name := q.Question[0].Name
+		if q.Question[0].Qtype != mdns.TypeA && routingNeedsAddress(b.pol.Load(), name, view) {
+			return emptyReply(q), nil
+		}
 		cname := &mdns.CNAME{Hdr: mdns.RR_Header{Name: q.Question[0].Name, Rrtype: mdns.TypeCNAME, Class: mdns.ClassINET, Ttl: 300}, Target: mdns.Fqdn(target)}
 		if q.Question[0].Qtype == mdns.TypeCNAME {
 			r := new(mdns.Msg)
@@ -105,12 +114,19 @@ func (b *Broker) ResolveClient(ctx context.Context, q *mdns.Msg, view View) (*md
 		}
 		q2 := q.Copy()
 		q2.Question[0].Name = mdns.Fqdn(target)
-		r2, e := b.Resolve(ctx, q2, view)
+		r2, e := b.resolve(ctx, q2, view, name)
 		if e != nil {
 			return nil, e
 		}
 		r := r2.Copy()
+		if len(r.Answer) == 0 && routingNeedsAddress(b.pol.Load(), name, view) {
+			r.Question, r.Id = q.Question, q.Id
+			return r, nil
+		}
 		// The CNAME is ours, not signed or served by an authority.
+		for _, rr := range r.Answer {
+			cname.Hdr.Ttl = min(cname.Hdr.Ttl, rr.Header().Ttl)
+		}
 		r.AuthenticatedData = false
 		r.Authoritative = false
 		r.Question = q.Question
@@ -137,19 +153,21 @@ func (b *Broker) SetRouter(a netip.Addr) {
 	}
 }
 
-// SetPolicy switches the policy used for new answers (a routing mode change)
-// and rebinds every outstanding address under it, in both directions, so the
-// direct and VPN sets follow the new mode for new flows. Established flows
-// keep their marks. A failed kernel rewrite is returned; the in-memory
-// bindings are already reclassified, so the next rewrite converges.
-func (b *Broker) SetPolicy(p *policy.Policy) error {
-	if p == nil {
-		return nil
+// ApplyPolicy publishes the static policy and DNS bindings together before new
+// answers use the new policy. In-flight answers retry if the policy changes.
+func (b *Broker) ApplyPolicy(p *policy.Policy, static string) error {
+	c, ok := b.mappings.(interface {
+		ApplyPolicy(Classifier, string) error
+	})
+	if !ok {
+		return fmt.Errorf("DNS mappings cannot publish routing policy")
+	}
+	b.policyMu.Lock()
+	defer b.policyMu.Unlock()
+	if err := c.ApplyPolicy(ClassifierFor(p), static); err != nil {
+		return err
 	}
 	b.pol.Store(p)
-	if c, ok := b.mappings.(interface{ SetClassifier(Classifier) error }); ok {
-		return c.SetClassifier(ClassifierFor(p))
-	}
 	return nil
 }
 
@@ -158,7 +176,7 @@ func (b *Broker) SetPolicy(p *policy.Policy) error {
 // direct CIDRs per address. Local names get no binding.
 func ClassifierFor(p *policy.Policy) Classifier {
 	return func(name string, v View, ip netip.Addr) (View, bool) {
-		class, source := p.DomainDecision(name)
+		class, source := domainDecision(p, name, v.Alias)
 		if class == contract.Local {
 			return View{}, false
 		}
@@ -166,8 +184,20 @@ func ClassifierFor(p *policy.Policy) Classifier {
 		if class == contract.General && source == "" && p.ClassifyIP(ip) == contract.Direct {
 			id, class, source = string(contract.General)+"-ip-direct", contract.Direct, "roscom-direct-ips"
 		}
-		return View{ID: id, Generation: v.Generation, Class: class, Source: source, Channel: v.Channel}, true
+		return View{ID: id, Generation: v.Generation, Class: class, Source: source, Channel: v.Channel, Alias: v.Alias}, true
 	}
+}
+
+func domainDecision(p *policy.Policy, name, alias string) (contract.Class, string) {
+	class, source := p.DomainDecision(name)
+	if alias == "" || class == contract.Local {
+		return class, source
+	}
+	targetClass, targetSource := p.DomainDecision(alias)
+	if targetClass != contract.Local && source != "" && (class == contract.General || class == contract.Games) {
+		return class, source
+	}
+	return targetClass, targetSource
 }
 
 func New(p *policy.Policy, r RouteProvider, m MappingWriter) *Broker {
@@ -235,6 +265,38 @@ func parseResolvers(b []byte, router netip.Addr) []string {
 	return out
 }
 func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg, error) {
+	return b.resolve(ctx, q, view, "")
+}
+
+func aliasQuery(qtype uint16) bool {
+	switch qtype {
+	case mdns.TypeHTTPS, mdns.TypeSVCB, mdns.TypeCNAME, mdns.TypeDNAME, mdns.TypeAAAA, mdns.TypeANY:
+		return true
+	}
+	return false
+}
+
+func routingNeedsAddress(p *policy.Policy, name string, view View) bool {
+	if p == nil || p.DefaultClass() != contract.Direct || view.Source == "device-profile" || strings.HasPrefix(view.ID, "session:") {
+		return false
+	}
+	class := view.Class
+	if view.ID == "" {
+		class = p.ClassifyDomain(name)
+	}
+	return class == contract.General || class == contract.Games
+}
+
+func emptyReply(q *mdns.Msg) *mdns.Msg {
+	r := new(mdns.Msg)
+	r.SetReply(q)
+	r.RecursionAvailable = true
+	return r
+}
+
+// rewrittenFrom keeps protected names protected when the DNS filter rewrites
+// them to another host. The query still asks upstream for the rewrite target.
+func (b *Broker) resolve(ctx context.Context, q *mdns.Msg, view View, rewrittenFrom string) (*mdns.Msg, error) {
 	if q.Response || len(q.Question) != 1 || q.Opcode != mdns.OpcodeQuery {
 		return nil, fmt.Errorf("invalid query")
 	}
@@ -251,18 +313,28 @@ func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg
 		}
 		opt.Option = clean
 	}
-	name := strings.ToLower(q.Question[0].Name)
+	name, alias := strings.ToLower(q.Question[0].Name), ""
+	pol := b.pol.Load()
+	if rewrittenFrom != "" {
+		name, alias = strings.ToLower(rewrittenFrom), name
+	}
 	class, source := view.Class, view.Source
 	if view.ID == "" {
-		pol := b.pol.Load()
 		if pol == nil {
 			return nil, fmt.Errorf("missing DNS policy")
 		}
-		class, source = pol.DomainDecision(name)
+		class, source = domainDecision(pol, name, alias)
 	}
 	if view.ID == "" {
 		channel, gen := b.routes.DNSRoute(class)
 		view = View{ID: string(class), Generation: gen, Class: class, Source: source, Channel: channel}
+	}
+	view.Alias = alias
+	protectedName := routingNeedsAddress(pol, name, view)
+	if protectedName && aliasQuery(q.Question[0].Qtype) {
+		// Clients must obtain an A record so the broker can install the VPN
+		// binding before an IPv4 connection. Service bindings can skip that lookup.
+		return emptyReply(q), nil
 	}
 	var r *mdns.Msg
 	var e error
@@ -310,15 +382,42 @@ func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg
 		}
 	}
 	ClampReply(r)
-	rs, e := AnswerRecords(r)
+	var minTTL uint32
+	if protectedName {
+		// A zero-TTL answer can still be used immediately for one connection.
+		minTTL = 5
+	}
+	rs, e := answerRecords(r, minTTL)
 	if e != nil {
 		return nil, e
 	}
-	if q.Question[0].Qtype == mdns.TypeA && view.Class != contract.Local && !strings.HasPrefix(view.ID, "session:") && view.Source != "device-profile" && b.mappings != nil {
+	b.policyMu.RLock()
+	defer b.policyMu.RUnlock()
+	if pol != b.pol.Load() {
+		return nil, fmt.Errorf("routing policy changed during DNS lookup")
+	}
+	if protectedName {
+		var ipv4 bool
+		for _, record := range rs {
+			ipv4 = ipv4 || record.IP.Is4()
+		}
+		unboundAlias := false
+		for _, rr := range r.Answer {
+			kind := rr.Header().Rrtype
+			unboundAlias = unboundAlias || kind == mdns.TypeCNAME || kind == mdns.TypeDNAME
+		}
+		if !ipv4 && unboundAlias {
+			// Do not send a standalone alias that could lead to a direct A lookup.
+			code := r.Rcode
+			r = emptyReply(q)
+			r.Rcode = code
+		}
+	}
+	if (q.Question[0].Qtype == mdns.TypeA || protectedName) && view.Class != contract.Local && !strings.HasPrefix(view.ID, "session:") && view.Source != "device-profile" && b.mappings != nil {
 		if source == "" && view.Class == contract.General {
 			var direct, vpn []AddressTTL
 			for _, record := range rs {
-				if b.pol.Load().ClassifyIP(record.IP) == contract.Direct {
+				if pol != nil && pol.ClassifyIP(record.IP) == contract.Direct {
 					direct = append(direct, record)
 				} else {
 					vpn = append(vpn, record)
@@ -330,8 +429,7 @@ func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg
 			v := view
 			v.ID += "-ip-direct"
 			v.Class = contract.Direct
-			// Named after the static list it came from, so a routing mode that
-			// switches that list off can drop these bindings (SetPolicy).
+			// Publication reclassifies bindings that came from a disabled list.
 			v.Source = "roscom-direct-ips"
 			if e = b.mappings.Replace(v, name, direct); e != nil {
 				return nil, e
@@ -347,6 +445,25 @@ func (b *Broker) Resolve(ctx context.Context, q *mdns.Msg, view View) (*mdns.Msg
 	return r, nil
 }
 func (b *Broker) Serve(ctx context.Context, addr string) error {
+	done, err := b.Start(ctx, addr)
+	if err != nil {
+		return err
+	}
+	return <-done
+}
+
+// Start binds both DNS sockets before returning. Cancel ctx and wait for the
+// returned channel before starting another resolver on the same port.
+func (b *Broker) Start(ctx context.Context, addr string) (<-chan error, error) {
+	udp, err := net.ListenPacket("udp4", addr)
+	if err != nil {
+		return nil, err
+	}
+	tcp, err := net.Listen("tcp4", udp.LocalAddr().String())
+	if err != nil {
+		udp.Close()
+		return nil, err
+	}
 	handler := mdns.HandlerFunc(func(w mdns.ResponseWriter, q *mdns.Msg) {
 		select {
 		case b.sem <- struct{}{}:
@@ -373,22 +490,46 @@ func (b *Broker) Serve(ctx context.Context, addr string) error {
 		}
 		w.WriteMsg(r)
 	})
+	ready := make(chan struct{}, 2)
+	started := func() { ready <- struct{}{} }
+	servers := []*mdns.Server{
+		{PacketConn: udp, Handler: handler, UDPSize: 4096, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, NotifyStartedFunc: started},
+		{Listener: tcp, Handler: handler, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, NotifyStartedFunc: started},
+	}
+	stopped := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() { stopped <- s.ActivateAndServe() }()
+	}
+	for range servers {
+		select {
+		case <-ready:
+		case err := <-stopped:
+			udp.Close()
+			tcp.Close()
+			if err == nil {
+				err = fmt.Errorf("DNS listener exited during startup")
+			}
+			return nil, err
+		}
+	}
+	ctx, cancel := context.WithCancel(ctx)
 	if b.FilterPath != "" {
 		b.watchFilter(ctx, b.FilterPath)
 	}
-	servers := []*mdns.Server{{Addr: addr, Net: "udp4", Handler: handler, UDPSize: 4096, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}, {Addr: addr, Net: "tcp4", Handler: handler, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}}
-	done := make(chan error, 2)
-	for _, s := range servers {
-		go func(s *mdns.Server) { done <- s.ListenAndServe() }(s)
-	}
-	var e error
-	select {
-	case <-ctx.Done():
-		e = ctx.Err()
-	case e = <-done:
-	}
-	for _, s := range servers {
-		s.Shutdown()
-	}
-	return e
+	done := make(chan error, 1)
+	go func() {
+		var err error
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+		case err = <-stopped:
+		}
+		cancel()
+		for _, s := range servers {
+			s.Shutdown()
+		}
+		done <- err
+		close(done)
+	}()
+	return done, nil
 }

@@ -91,7 +91,7 @@
     "upload_artifact": "ea165f8d65b6e75b540449e92b4886f43607fa02"
   },
   "runtime": {
-    "version": "0.7",
+    "version": "0.8",
     "go_version": "1.26.8",
     "dependencies": {
       "github.com/miekg/dns": "v1.1.68",

@@ -28,7 +28,7 @@ func newHistory() *diagnostic.History {
 			}
 		}
 	}
-	return diagnostic.New(boot, "0.7-runtime", source)
+	return diagnostic.New(boot, contract.RuntimeVersion, source)
 }
 func summaryIdentity(s *connection.Summary) diagnostic.Identity {
 	if s == nil {
@@ -67,8 +67,18 @@ func (c *Controller) recordDecision(d diagnostic.Decision) {
 	c.history.AddDecision(d)
 	c.saveDiagnostics()
 }
+func (c *Controller) recordAttempt(a diagnostic.Attempt) {
+	if c.history == nil {
+		return
+	}
+	var wan diagnostic.WANResult
+	if c.wan != nil {
+		wan = c.wan.Snapshot()
+	}
+	c.history.AddAttempt(a, wan)
+}
 func (c *Controller) recordPublication(from *connection.Summary, next transport.Snapshot, stage, outcome string) {
-	c.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: next.Generation, ActualKnown: true, Actual: summaryIdentity(c.activeConnection), ActualSelection: c.selection, From: summaryIdentity(from), To: summaryIdentity(next.ActiveConnection), Reason: transitionReason(from, next.ActiveConnection), Stage: stage, Outcome: outcome, ReserveRetained: next.ReserveConnection != nil})
+	c.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: next.Generation, AttemptSequence: next.AttemptSequence, ActualKnown: true, Actual: summaryIdentity(c.activeConnection), ActualSelection: c.selection, From: summaryIdentity(from), To: summaryIdentity(next.ActiveConnection), Reason: transitionReason(from, next.ActiveConnection), Stage: stage, Outcome: outcome, ReserveRetained: next.ReserveConnection != nil})
 }
 func (c *Controller) recordRound(next transport.Snapshot) {
 	if c.history == nil {

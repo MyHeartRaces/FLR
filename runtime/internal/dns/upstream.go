@@ -127,6 +127,10 @@ func DoH(ctx context.Context, q *mdns.Msg, channel contract.Channel, ip, hostnam
 		dial = func(ctx context.Context, target string) (net.Conn, error) {
 			return DialMarked(ctx, "tcp", target, contract.ChannelMark(channel)|contract.ClassMark(contract.General), "flr_awg")
 		}
+	case contract.Continuity:
+		dial = func(ctx context.Context, target string) (net.Conn, error) {
+			return DialMarked(ctx, "tcp4", target, contract.ChannelMark(channel)|contract.ClassMark(contract.General), contract.ContinuityDevice)
+		}
 	case contract.Gecko:
 		dial = func(ctx context.Context, target string) (net.Conn, error) {
 			return socks.DialContext(ctx, "127.0.0.1:1081", target)

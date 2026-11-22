@@ -76,6 +76,7 @@ type warmAdmission struct {
 	ctx        context.Context
 	cancel     context.CancelFunc
 	done       chan struct{}
+	attempt    *diagnostic.Attempt
 	// Under m.mu. cancelled: its failure is not the candidate's (no backoff),
 	// but a start that had already qualified is still adopted. abandoned: a
 	// newer intent, disable or shutdown; it is never adopted.
@@ -158,8 +159,10 @@ func (m *Manager) StepWarmReserve(lifetime context.Context, now time.Time, regis
 // admission context only bounds and cancels its start and probe.
 func (m *Manager) launchAdmission(lifetime context.Context, now time.Time, item connection.Connection, generation uint64) {
 	ctx, cancel := context.WithCancel(lifetime)
-	adm := &warmAdmission{item: item, generation: generation, started: now, ctx: ctx, cancel: cancel, done: make(chan struct{})}
-	m.connectionState().admission = adm
+	s := m.connectionState()
+	adm := &warmAdmission{item: item, generation: generation, started: now, ctx: ctx, cancel: cancel, done: make(chan struct{}),
+		attempt: beginAttempt(&item, connectionIdentity(s.active), generation, "warm_reserve")}
+	s.admission = adm
 	work := item.Clone()
 	go m.runAdmission(lifetime, adm, *work.Profile, m.StepTimeout, m.ProbeTimeout)
 }
@@ -167,13 +170,9 @@ func (m *Manager) launchAdmission(lifetime context.Context, now time.Time, item 
 // runAdmission must not touch manager state: it holds no lock.
 func (m *Manager) runAdmission(lifetime context.Context, adm *warmAdmission, p profile.Profile, startBudget, probeBudget time.Duration) {
 	defer close(adm.done)
+	defer func() { adm.attempt.Finished = time.Now() }()
 	start, cancel := context.WithTimeout(adm.ctx, startBudget)
-	var err error
-	if backend, ok := m.backend.(budgetBackend); ok {
-		err = backend.StartBudget(lifetime, start, p)
-	} else {
-		err = m.backend.Start(start, p)
-	}
+	err := m.startCandidate(lifetime, start, p, adm.attempt)
 	if err == nil {
 		err = start.Err()
 	}
@@ -181,7 +180,9 @@ func (m *Manager) runAdmission(lifetime context.Context, adm *warmAdmission, p p
 	result := health.Result{}
 	if err == nil && adm.ctx.Err() == nil {
 		bounded, cancel := context.WithTimeout(adm.ctx, probeBudget)
+		start := time.Now()
 		result = m.probe(bounded, p)
+		adm.attempt.Probes[0] = probeObservation(start, bounded, result, p.Capabilities.UDP)
 		cancel()
 		if !p.Capabilities.UDP {
 			result.UDP = false
@@ -192,7 +193,16 @@ func (m *Manager) runAdmission(lifetime context.Context, adm *warmAdmission, p p
 		}
 	}
 	adm.err, adm.result = err, result
-	adm.alive = err == nil && m.backend.Alive()
+	if err == nil {
+		start := time.Now()
+		adm.alive = m.backend.Alive()
+		if adm.attempt.Ready.Outcome == "" || !adm.alive {
+			adm.attempt.Ready = readinessStage(start, adm.alive)
+		}
+	}
+	if err != nil {
+		adm.attempt.Outcome = operationStage(adm.attempt.Started, err).Outcome
+	}
 }
 
 // waitAdmission waits for the worker at most wait, or until ctx ends.
@@ -243,7 +253,9 @@ func (m *Manager) collectAdmission(now time.Time, available map[string]connectio
 		// Not reachable by construction (the slot stays empty while a worker
 		// runs). A single-slot backend refuses a second start, so there is no
 		// process of this admission to stop, and the slot must not be touched.
-		m.recordWarm(&adm.item, "superseded")
+		adm.attempt.Outcome = "superseded"
+		m.finishAttempt(context.Background(), adm.attempt)
+		m.recordWarm(adm, "superseded")
 		return
 	}
 	qualified := adm.err == nil && adm.alive && adm.result.NotMeasured == "" && adm.result.TCP && (!adm.item.Profile.Capabilities.UDP || adm.result.UDP)
@@ -257,15 +269,23 @@ func (m *Manager) collectAdmission(now time.Time, available map[string]connectio
 		s.health[key] = state
 		m.state.Slot = state
 		m.refreshReserve()
-		m.recordWarm(&adm.item, "applied")
+		adm.attempt.Outcome = "ok"
+		m.finishAttempt(context.Background(), adm.attempt)
+		m.recordWarm(adm, "applied")
 		return
 	}
 	m.stopStandby("warm_reserve", &adm.item, now)
+	if !current {
+		adm.attempt.Outcome = "superseded"
+	} else if adm.cancelled {
+		adm.attempt.Outcome = "cancelled"
+	}
+	m.finishAttempt(context.Background(), adm.attempt)
 	if current && !adm.cancelled {
 		m.warmBackoff(key, adm.started)
-		m.recordWarm(&adm.item, "failed")
+		m.recordWarm(adm, "failed")
 	} else {
-		m.recordWarm(&adm.item, "superseded")
+		m.recordWarm(adm, "superseded")
 	}
 }
 
@@ -284,7 +304,9 @@ func (m *Manager) abandonAdmission(wait time.Duration) bool {
 		return false
 	}
 	m.connections.admission = nil
-	m.recordWarm(&adm.item, "superseded")
+	adm.attempt.Outcome = "superseded"
+	m.finishAttempt(context.Background(), adm.attempt)
+	m.recordWarm(adm, "superseded")
 	return true
 }
 
@@ -386,29 +408,38 @@ func (m *Manager) retryQuarantine(reason string, now time.Time) bool {
 // reserve, probed every round.
 func (m *Manager) admitReserve(lifetime context.Context, now time.Time, item connection.Connection, generation uint64, reason string) error {
 	s := m.connectionState()
+	attempt := beginAttempt(&item, connectionIdentity(s.active), generation, reason)
+	defer m.finishAttempt(lifetime, attempt)
 	slot := item.Clone()
 	s.slot = &slot
 	p := *slot.Profile
 	m.active = &p
 	start, cancel := context.WithTimeout(lifetime, m.StepTimeout)
-	var err error
-	if backend, ok := m.backend.(budgetBackend); ok {
-		err = backend.StartBudget(lifetime, start, p)
-	} else {
-		err = m.backend.Start(start, p)
-	}
+	err := m.startCandidate(lifetime, start, p, attempt)
 	if err == nil {
 		err = start.Err()
 	}
 	cancel()
 	result := health.Result{}
 	if err == nil && lifetime.Err() == nil && m.requestedGeneration.Load() == generation {
+		start := time.Now()
 		result = m.runProbe(lifetime, p)
+		attempt.Probes[0] = probeObservation(start, lifetime, result, p.Capabilities.UDP)
 	}
 	if err == nil && (lifetime.Err() != nil || m.requestedGeneration.Load() != generation) {
 		err = fmt.Errorf("reserve admission superseded")
-	} else if err == nil && (result.NotMeasured != "" || !m.backend.Alive() || !result.TCP || (p.Capabilities.UDP && !result.UDP)) {
-		err = fmt.Errorf("reserve start or TCP/UDP probe failed")
+	} else if err == nil {
+		alive := false
+		if result.NotMeasured == "" {
+			start := time.Now()
+			alive = m.backend.Alive()
+			if attempt.Ready.Outcome == "" || !alive {
+				attempt.Ready = readinessStage(start, alive)
+			}
+		}
+		if !alive || !result.TCP || (p.Capabilities.UDP && !result.UDP) {
+			err = fmt.Errorf("reserve start or TCP/UDP probe failed")
+		}
 	}
 	if err != nil {
 		m.retireStandby(reason, now)
@@ -419,6 +450,7 @@ func (m *Manager) admitReserve(lifetime context.Context, now time.Time, item con
 	s.warm = m.warm.Enabled && m.state.Requested.Mode == "auto"
 	m.state.Slot = state
 	m.refreshReserve()
+	attempt.Outcome = "ok"
 	return nil
 }
 
@@ -465,9 +497,9 @@ func (m *Manager) standbySettled(now time.Time, nativePresent bool) bool {
 	return standby.Up && standby.Failures == 0 && !standby.LastCheck.IsZero() && !now.Before(standby.LastCheck) && now.Sub(standby.LastCheck) < m.warm.Interval
 }
 
-func (m *Manager) recordWarm(item *connection.Connection, outcome string) {
+func (m *Manager) recordWarm(adm *warmAdmission, outcome string) {
 	if m.recordDecision == nil {
 		return
 	}
-	m.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: m.state.Generation, To: connectionIdentity(item), Reason: "warm_reserve", Stage: "selection", Channel: contract.Gecko, Outcome: outcome, ReserveRetained: outcome == "applied"})
+	m.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: adm.generation, AttemptSequence: adm.attempt.AttemptSequence, To: connectionIdentity(&adm.item), Reason: "warm_reserve", Stage: "selection", Channel: contract.Gecko, Outcome: outcome, ReserveRetained: outcome == "applied"})
 }

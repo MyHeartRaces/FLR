@@ -71,7 +71,7 @@ def check_manifest(text, lock):
         if name in lock['packages']:
             versions[name] = expected['kernel']
     if "runtime" in lock:
-        versions.update({"flr-runtime": lock["runtime"]["version"], "luci-app-flr": "0.7"})
+        versions.update({name: lock["runtime"]["version"] for name in ("flr-runtime", "luci-app-flr")})
     versions.update({n["package"]: n["version"] for n in lock.get("native", {}).values() if "package" in n})
     for name, version in versions.items():
         if name not in lock["packages"]:

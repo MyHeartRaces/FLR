@@ -1,5 +1,6 @@
 'use strict';
 'require view';
+'require poll';
 'require flr';
 
 // Routing · overview: the policy in use, the routing mode and a paged,
@@ -17,27 +18,71 @@ return view.extend({
   var classes={local:_('Local'),direct:_('Direct (ISP)'),general:_('VPN'),games:_('Games (VPN)')};
   var kinds={domain:_('exact domain'),domain_suffix:_('domain and subdomains'),domain_keyword:_('keyword'),domain_regex:_('regular expression'),ip_cidr:_('address / subnet')};
   var meta=p.policy || {},live=p.live || {},custom=p.custom_rules || {},summary=custom.summary || {};
-  var policyCard=[E('h3',{},_('Active policy')),
-   E('p',{},[p.source==='overlay'?_('The private overlay from /etc/flr-runtime/policy is in use.'):_('The image default is in use: everything except local destinations goes through the VPN.')]),
+  var modes=[
+   {value:'split',label:_('Full proxy'),description:_('Default mode. Traffic uses the VPN unless an installed direct list or custom rule routes it through the ISP.')},
+   {value:'tunnel',label:_('Tunnel'),description:_('Traffic uses the ISP by default. Protected destinations, game platforms, VPN services and custom VPN rules use the VPN. Custom Direct rules are inactive.')},
+   {value:'direct',label:_('Direct'),description:_('Traffic follows the normal ISP route and uses the router’s usual DNS. Direct bypasses FLR routing rules, device routes and DNS filtering.')}];
+  var legacyLabels=new Map([['proxy',_('Full proxy with custom exceptions')],['full_domestic',_('Tunnel with essential bypasses')],['full',_('Strict tunnel')]]);
+  var routingMode,legacyOption,description;
+  var rulesetStates=new Map();
+  function findMode(value){return modes.find(function(mode){return mode.value===value;});}
+  function modeLabel(value){var mode=findMode(value);return mode?mode.label:legacyLabels.get(value) || String(value || '—');}
+  function selectableOptions(selected){return modes.map(function(mode){return E('option',{value:mode.value,selected:selected===mode.value?true:null},[mode.label]);});}
+  function describe(value){var mode=findMode(value);description.replaceChildren(mode?mode.description:'');}
+  function pending(){return live.controller && (live.pending===true || (live.vpn && p.mode && p.mode!==live.applied_mode));}
+  function liveText(){
+   if(!live.controller)return _('The controller is not running; changes apply when it starts.');
+   if(pending())return _('Waiting to apply %s. Active mode: %s.').format(modeLabel(p.mode),modeLabel(live.applied_mode));
+   if(!live.vpn && live.applied_mode!=='direct')return _('The VPN is not running; changes apply when it starts.');
+   return _('Active routing mode: %s.').format(modeLabel(live.applied_mode));
+  }
+  function lastApplyText(){return live.last_apply?_('Last applied: %s (%s).').format(String(live.last_apply),String(live.last_apply_source || '')):'';}
+  var lastLiveText=liveText(),liveStatus=E('p',{class:'flr-muted','aria-live':'polite'},[lastLiveText]);
+  var appliedAt=E('p',{class:'flr-muted',hidden:live.last_apply?null:true},[lastApplyText()]);
+  async function refreshMode(){
+   var latest=await flr.routing('routing-policy');
+   p.mode=latest.mode;
+   live=latest.live || {};
+   if(legacyOption && findMode(p.mode)) {
+    var selected=findMode(routingMode.value)?routingMode.value:p.mode;
+    routingMode.replaceChildren.apply(routingMode,selectableOptions(selected));
+    routingMode.value=selected;
+    describe(selected);
+    legacyOption=null;
+   }
+   var text=liveText();
+   if(text!==lastLiveText) {
+    lastLiveText=text;
+    liveStatus.replaceChildren(text);
+   }
+   appliedAt.hidden=!live.last_apply;
+   appliedAt.replaceChildren(lastApplyText());
+   if(Array.isArray(latest.rulesets))latest.rulesets.forEach(function(rs){if(rulesetStates.has(rs.name))rulesetStates.get(rs.name).replaceChildren(ruleState(rs));});
+  }
+  var policyCard=[E('h3',{},_('Installed policy')),
+   E('p',{},[p.source==='overlay'?_('The private overlay from /etc/flr-runtime/policy is installed.'):_('The image policy is installed.')]),
    E('p',{class:'flr-muted'},[_('policy.json: status %s · version %s').format(String(meta.status || '—'),String(meta.version || '—'))])];
   if(meta.note)policyCard.push(E('p',{class:'flr-muted'},[String(meta.note)]));
   if(p.overlay_error)policyCard.push(E('p',{class:'flr-notice'},[_('The private overlay was refused, so the image default is in use: %s').format(p.overlay_error)]));
   if(p.backup_present)policyCard.push(E('p',{class:'flr-muted'},_('A previous overlay is kept as a backup; "Import & export" can restore it.')));
-  policyCard.push(E('p',{class:'flr-muted'},[!live.controller?_('The controller is not running; changes apply when it starts.'):!live.vpn?_('The VPN is not running; changes apply when it starts.'):_('Applied live in mode %s.').format(String(live.applied_mode || '—'))]));
-  if(live.last_apply)policyCard.push(E('p',{class:'flr-muted'},[_('Last applied: %s (%s).').format(String(live.last_apply),String(live.last_apply_source || ''))]));
+  policyCard.push(liveStatus,appliedAt);
   var customError=custom.error || live.custom_rules_error;
   if(customError)policyCard.push(E('p',{class:'flr-notice'},[_('Custom rules are not in use: %s').format(customError)]));
-  // Routing mode (moved here from Settings).
-  var routingModes=[['split',_('Split: lists from the private policy')],['full_domestic',_('Everything via VPN except essential direct services')],['full',_('Everything via VPN')]],routing=[];
+  var routing=[];
   if(typeof p.mode==='string') {
-   var known=routingModes.some(function(m){return m[0]===p.mode;});
-   var routingMode=controlE('select',{'data-field':'routing_mode'},(known?[]:[E('option',{value:p.mode,selected:true},[_('Current: %s').format(p.mode)])]).concat(routingModes.map(function(m){return E('option',{value:m[0],selected:p.mode===m[0]?true:null},[m[1]]);})));
+   description=E('p',{id:'flr-routing-mode-description',class:'flr-muted','aria-live':'polite'});
+   legacyOption=findMode(p.mode)?null:E('option',{value:p.mode,selected:true,disabled:true},[_('Current: %s').format(modeLabel(p.mode))]);
+   var options=selectableOptions(p.mode);
+   if(legacyOption)options.unshift(legacyOption);
+   routingMode=controlE('select',{'data-field':'routing_mode','aria-describedby':'flr-routing-mode-description',change:function(){describe(routingMode.value);}},options);
+   describe(p.mode);
    routing=[E('h3',{},_('Routing mode')),
-    E('p',{},_('"Split" sends destinations from the private policy directly (without it, only local ones). "Everything via VPN except essential direct services" keeps a short list of services that do not work from a foreign address direct. "Everything via VPN" keeps only the LAN, the router itself and explicit direct (SOCKS, the "Direct" device route) direct.')),
-    E('p',{},_('Custom "direct" rules apply in the first two modes; custom "VPN" rules apply in all of them.')),
-    E('p',{class:'flr-muted'},_('The full modes increase traffic to the server, add latency for domestic sites and show them the server address.')),
     flr.field(_('Mode'),routingMode),
-    flr.action(_('Save routing mode'),function(){if(!routingModes.some(function(m){return m[0]===routingMode.value;}))throw new Error(_('Choose a routing mode.'));return {operation:'settings',settings:{routing_mode:routingMode.value}};})];
+    description,
+    E('p',{class:'flr-muted'},_('Mode changes apply to new connections. Existing connections keep their routes. Local destinations stay on the LAN.')),
+    E('p',{},[E('a',{href:L.url('admin','flr','proxy','order')},_('Choose the VPN connection in Proxy'))]),
+    flr.action(_('Save routing mode'),function(){if(!findMode(routingMode.value))throw new Error(_('Choose a routing mode.'));return {operation:'settings',settings:{routing_mode:routingMode.value}};},refreshMode)];
+   poll.add(function(){if(pending())return refreshMode().catch(flr.error);},5);
   }
   // Paged entry browser for one ruleset.
   var browser=E('section',{class:'flr-card','data-browser':'',hidden:true}),view={ruleset:'',query:'',offset:0,limit:100};
@@ -55,13 +100,16 @@ return view.extend({
   }
   function fetchPage(){return flr.routing('routing-entries',{ruleset:view.ruleset,query:view.query,offset:view.offset,limit:view.limit}).then(drawPage).catch(flr.error);}
   function browse(name){view.ruleset=name;view.query='';view.offset=0;search.value='';browser.hidden=false;return fetchPage();}
+  function ruleState(rs){return rs.active?_('in use'):_('off in this mode');}
   var rows=p.rulesets.map(function(rs) {
    var counts=rs.counts || {},domains=(counts.domain || 0)+(counts.domain_suffix || 0)+(counts.domain_keyword || 0)+(counts.domain_regex || 0);
+   var state=E('td',{class:'td'},[ruleState(rs)]);
+   rulesetStates.set(rs.name,state);
    return E('tr',{class:'tr','data-ruleset':rs.name},[
     E('td',{class:'td'},[E('strong',{},[names[rs.name] || String(rs.name)]),E('br'),E('code',{},[String(rs.name)])]),
     E('td',{class:'td'},[classes[rs.class] || String(rs.class)]),
     E('td',{class:'td'},[rs.error?_('unreadable: %s').format(rs.error):_('%s in total · %s domain · %s address').format(rs.total || 0,domains,counts.ip_cidr || 0)]),
-    E('td',{class:'td'},[rs.active?_('in use'):_('off in this mode')]),
+    state,
     E('td',{class:'td'},[E('button',{class:'cbi-button','aria-label':_('Browse %s').format(rs.name),disabled:rs.total?null:true,click:function(){return browse(rs.name);}},_('Browse'))])]);
   });
   var rulesets=[E('h3',{},_('Rulesets')),

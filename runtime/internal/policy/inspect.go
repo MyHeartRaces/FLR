@@ -46,6 +46,9 @@ func SourceClass(source string) Class {
 
 // ActiveInMode reports whether a routing mode uses a source.
 func ActiveInMode(source, mode string) bool {
+	if mode == ModeDirect {
+		return false
+	}
 	for _, off := range modeOff(mode) {
 		if off == source {
 			return false

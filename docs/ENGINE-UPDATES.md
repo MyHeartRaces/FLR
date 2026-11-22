@@ -132,33 +132,39 @@ One cycle for Hysteria:
    than `current`, not blocked, not on hold.
 2. Verify sha256 against upstream `hashes.txt` and the GitHub asset digest,
    the ELF architecture, and the `version` output.
-3. **Canary instance**: a second Hysteria process on `canary_port` with a
-   copy of the production config must report "server up and running".
-   Production is not touched.
-4. **Promote only when the router is connected but idle**: Hysteria's
-   traffic-stats API must show the router's user online with probe-level
-   traffic only (at most 256 KiB in two minutes). A router that is offline,
-   or that does not keep a warm reserve yet, defers promotion: without the
-   router there is nobody to prove compatibility. Without the stats API,
-   `promote_when: "idle"` always defers; `"any"` is the explicit override.
-5. Promote, restart, check the service.
-6. **Router-traffic verification**: within 20 minutes the router's user must
-   move at least 4 KiB in each direction through the new version, or stay
-   online with traffic in both directions for three consecutive polls (stats
-   API). The router's warm reserve guarantees this traffic: it keeps a
-   Hysteria session up and probes it every 30-60 s. Online but no traffic:
-   the new version cannot serve the router, so roll back to `last_good`,
-   restart and block the version. Never connected during the window: roll
-   back but do not block ("inconclusive"); the version is retried later.
-   A canary or rollback failure that the current binary shares is likewise
-   inconclusive, never a block.
+3. **Qualify before promotion** in apply mode. Start a second Hysteria
+   process on a separately scoped port with the production protocol,
+   authentication and TLS settings. Verify process ownership of its UDP and
+   loopback stats sockets. An authenticated router bridge invokes
+   `engine qualify-relay` on FLR 0.8 using an enabled fixed-port Hysteria2
+   profile. The router checks the build, profile revision, address, port and
+   deadline, then runs the 8 MiB HTTPS and three-answer UDP canary over its
+   WAN. The server also requires bidirectional traffic for that user on the
+   candidate process. On measured failure, compare with the serving build and
+   repeat the candidate check before blocking it.
+4. **Verify production eligibility.** Apply requires the paired qualification
+   configuration, production statistics and explicit maintenance restart
+   permission. The configured idle gate still applies. A missing receipt,
+   shared failure, missing statistics or unexpected listener ownership
+   defers promotion.
+5. Record the rollback state, promote and restart during the authorized
+   maintenance window. Repeat the authenticated traffic canary and local
+   counter checks on the final endpoint. A same-listener restart can end
+   existing Hysteria sessions.
+6. **Observe continued router traffic.** Verify warm-reserve traffic after
+   the final-endpoint canary. Missing or failed production evidence triggers
+   restoration. A shared failure remains inconclusive. When inline
+   verification is disabled, follow-up runs must occur inside the configured
+   verification window. An interrupted promotion is reconciled against the
+   saved last-good binary before another attempt.
 7. **Kernel gate** (read-only): for every installed kernel, is there an
    amneziawg module? `safe_to_reboot` is false when the newest kernel has
    none. The tool never reboots and never runs apt; it reports, so the owner
    reboots only into a kernel that brings the tunnel up.
 
-Without the stats API the server can only check that the service starts;
-the lock then records `"evidence": "service-only"`.
+Existing deployments can keep using report-only `check`, which runs no
+candidate. The authenticated bridge, candidate firewall scope and fixed-port
+profile are operator inputs. [Server updater configuration](../server/engine-update/README.md#private-qualification-configuration)
 
 ## 5. CI engine channel
 
@@ -208,9 +214,8 @@ not reset every week.
 - The router updater never restarts, signals or reconfigures a running
   engine, never touches nft, routes or the firewall, and never downloads
   outside the tunnel.
-- The server updater promotes Hysteria only while the router is connected
-  but idle (probe-level traffic), and rolls back on its own when the router
-  cannot use the new version.
+- The server updater requires matched router and relay evidence before and
+  after Hysteria promotion and restores last good when final verification fails.
 - Both default to report-only. Switching either to apply mode, and
   installing the server timer, are owner decisions.
 - AWG is never updated in place on either side: the router's module comes

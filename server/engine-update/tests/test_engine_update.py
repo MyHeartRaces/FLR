@@ -42,10 +42,15 @@ class FakeHost(eu.Host):
         self.active = True
         self.ready = True
         self.not_ready_restarts = set()     # 1-based restart numbers whose ready line never appears
+        self.failed_restarts = set()
         self.restart_rc = 0
         self.canary_result = (True, "ready")
         self.canary_queue = []
         self.canary_binaries = []
+        self.receipts = []
+        self.attempts = []
+        self.canary_reads = 0
+        self.canary_growth = (25000, 9 << 20)
         self.release = "6.12.1+deb13-amd64"
 
     def now(self):
@@ -59,6 +64,8 @@ class FakeHost(eu.Host):
 
     def systemctl(self, action, unit):
         self.calls.append((action, unit))
+        if action == "restart" and len(self.calls) in self.failed_restarts:
+            return 1, ""
         return self.restart_rc, ""
 
     def is_active(self, unit):
@@ -73,10 +80,31 @@ class FakeHost(eu.Host):
             m = re.search(rb"VERSION=(\S+)", f.read())
         return "Version:\t%s\n" % m.group(1).decode() if m else "garbage"
 
-    def canary(self, binary, config_path, timeout_s, pattern):
+    def listener_inode(self, pid, protocol, address, port):
+        return (pid, protocol, address, port)
+
+    def production_ownership(self, unit, sha, address, port, stats_port):
+        return [500 + len(self.calls), "prod-udp", "prod-stats"]
+
+    def loopback_stats(self, port, secret, path):
+        return self.net.get_json("http://127.0.0.1:%d%s" % (port, path), {"Authorization": secret})
+
+    def canary_counters(self, port, secret, user):
+        self.canary_reads += 1
+        return (0, 0) if self.canary_reads % 2 else self.canary_growth
+
+    def qualify_router(self, argv, attempt):
+        self.attempts.append(attempt)
+        receipt = {"attempt": attempt, "outcome": "passed", "https_bytes": 8 << 20, "https_ms": 3000, "udp_answers": 3}
+        if self.receipts:
+            self.receipts.pop(0)(attempt, receipt)
+        return receipt
+
+    def canary(self, binary, config_path, timeout_s, pattern, probe=None):
         with open(config_path) as f:
             self.canary_binaries.append((binary, f.read()))
-        return self.canary_queue.pop(0) if self.canary_queue else self.canary_result
+        ready, detail = self.canary_queue.pop(0) if self.canary_queue else self.canary_result
+        return ready, probe(100 + len(self.canary_binaries)) if ready and probe else detail
 
 
 class FakeNet:
@@ -89,7 +117,7 @@ class FakeNet:
         self.seen_headers = []
 
     def get_json(self, url, headers=None):
-        if url.startswith("http://stats"):
+        if url.startswith("http://127.0.0.1:25413"):
             self.seen_headers.append(headers)
             if self.stats_fail:
                 raise OSError("down")
@@ -149,14 +177,19 @@ class Base(unittest.TestCase):
             "gate": {"modules_root": p("modules"), "reboot_required_path": p("reboot-required")},
             "engines": {"hysteria": {
                 "binary": self.binary, "config_path": p("server.yaml"),
-                "stats_url": "http://stats" if self.stats else "",
+                "stats_url": "http://127.0.0.1:25413" if self.stats else "",
                 "stats_secret_file": p("secret") if self.stats else "",
-                "router_user": "router" if self.stats else ""}}})
+                "router_user": "router" if self.stats else "",
+                "qualification": {"command": ["/usr/local/libexec/qualify-router"], "router_build": "1" * 40,
+                                  "profile_revision": "2" * 64, "relay_id": "relay-a", "address": "203.0.113.4",
+                                  "bind_address": "192.0.2.4", "stats_port": 25414, "production_port": 443,
+                                  "allow_restart": True}}}})
         self.cfg = cfg
         self.cfg_path = p("config.json")
         with open(self.cfg_path, "w") as f:
             json.dump(cfg, f)
         self.host, self.net = FakeHost(), FakeNet()
+        self.host.net = self.net
 
     def updater(self):
         return eu.Updater(self.cfg, self.host, self.net)
@@ -307,9 +340,18 @@ class TestVerification(Base):
 
 
 class TestPromotion(Base):
+    def test_apply_without_pairing_leaves_production_serving(self):
+        self.cfg["engines"]["hysteria"]["qualification"] = None
+        make_release(self.net, "v2.15.0")
+        self.grow_on_poll()
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("deferred", 0))
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
     def test_canary_failure_blocks(self):
         make_release(self.net, "v2.15.0")
-        self.host.canary_queue = [(False, "exited early"), (True, "ready")]   # candidate fails, control passes
+        self.host.canary_queue = [(False, "exited early"), (True, "ready"), (False, "exited early")]
         rep, code = self.cycle()
         self.assertEqual((rep["result"], code), ("blocked", eu.EXIT_ROLLBACK))
         lk = self.lock()
@@ -320,12 +362,130 @@ class TestPromotion(Base):
         # blocked version is not retried
         self.assertEqual(self.cycle()[0]["result"], "up-to-date")
 
+    def test_failed_router_trial_blocks_only_after_a_passing_control_and_repeat_failure(self):
+        new = make_release(self.net, "v2.15.0")
+        self.host.receipts = [lambda _, r: r.update(outcome="failed"), lambda *_: None,
+                              lambda _, r: r.update(outcome="failed")]
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("blocked", eu.EXIT_ROLLBACK))
+        self.assertEqual([a["candidate_sha256"] for a in self.host.attempts], [sha(new), sha(self.old), sha(new)])
+        self.assertEqual(len({a["nonce"] for a in self.host.attempts}), 3)
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
+    def test_wrong_or_stale_router_receipt_leaves_production_serving(self):
+        make_release(self.net, "v2.15.0")
+        stale = lambda _, r: r.update(attempt={**r["attempt"], "nonce": "previous-attempt"})
+        wrong_listener = lambda _, r: r.update(attempt={**r["attempt"], "port": 443})
+        short_transfer = lambda _, r: r.update(https_bytes=(8 << 20) - 1)
+        expired = lambda *_: self.host.sleep(120)
+        for edit in (stale, wrong_listener, short_transfer, expired):
+            with self.subTest(edit=edit):
+                self.host.receipts = [edit]
+                rep, code = self.cycle()
+                self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+                self.assertEqual(self.lock()["blocked"], [])
+                self.assertEqual(self.binary_bytes(), self.old)
+                self.assertEqual(self.host.calls, [])
+
+    def test_valid_router_receipt_requires_candidate_listener_growth(self):
+        make_release(self.net, "v2.15.0")
+        self.host.canary_growth = (0, 9 << 20)
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
+    def test_final_endpoint_requires_a_fresh_successful_probe(self):
+        new = make_release(self.net, "v2.15.0")
+        self.grow_on_poll()
+        self.host.receipts = [lambda *_: None, lambda _, r: r.update(outcome="inconclusive")]
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.lock()["blocked"], [])
+        self.assertEqual([(a["listener"], a["port"], a["candidate_sha256"]) for a in self.host.attempts],
+                         [("candidate", 40443, sha(new)), ("production", 443, sha(new))])
+        self.assertNotEqual(self.host.attempts[0]["nonce"], self.host.attempts[1]["nonce"])
+        self.assertEqual(self.host.calls, [("restart", "flint-hysteria")] * 2)
+
+    def test_router_activity_during_canary_defers_restart(self):
+        make_release(self.net, "v2.15.0")
+
+        def subscriber_resumed(*_):
+            self.net.traffic = {"router": {"tx": 10**7, "rx": 10**7}}
+
+        self.host.receipts = [subscriber_resumed]
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("deferred", 0))
+        self.assertEqual(self.lock()["candidate"]["idle_check"]["decision"], "busy")
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
+    def test_receipt_expiring_in_copy_restores_on_disk_without_restart(self):
+        make_release(self.net, "v2.15.0")
+        self.grow_on_poll()
+        copy = eu.copy_atomic
+
+        def slow_promotion(src, dst):
+            copy(src, dst)
+            if dst == self.binary and "staged" in src:
+                self.host.sleep(120)
+
+        with mock.patch.object(eu, "copy_atomic", slow_promotion):
+            rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+        self.assertEqual(self.lock()["candidate"]["stage"], "ready")
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
+    def test_interrupted_install_reconciles_still_serving_old_process_without_restart(self):
+        for after_replace in (False, True):
+            with self.subTest(after_replace=after_replace):
+                new = make_release(self.net, "v2.15.0")
+                copy = eu.copy_atomic
+
+                def interrupt_promotion(src, dst):
+                    if dst == self.binary and "staged" in src:
+                        if after_replace:
+                            copy(src, dst)
+                        raise InterruptedError("test interruption")
+                    copy(src, dst)
+
+                with mock.patch.object(eu, "copy_atomic", interrupt_promotion):
+                    with self.assertRaises(InterruptedError):
+                        self.cycle()
+                self.assertEqual(self.lock()["candidate"]["stage"], "installing")
+                self.assertEqual(self.binary_bytes(), new if after_replace else self.old)
+                self.net.releases.clear()
+                rep, code = self.cycle()
+                self.assertEqual((rep["result"], code), ("up-to-date", 0))
+                self.assertIsNone(self.lock()["candidate"])
+                self.assertEqual(self.binary_bytes(), self.old)
+                self.assertEqual(self.host.calls, [])
+
+    def test_production_config_change_invalidates_receipt(self):
+        make_release(self.net, "v2.15.0")
+
+        def change_config(*_):
+            with open(self.cfg["engines"]["hysteria"]["config_path"], "a") as f:
+                f.write("# changed while qualifying\n")
+
+        self.host.receipts = [change_config]
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
+
     def test_canary_uses_temp_config_with_port(self):
         make_release(self.net, "v2.15.0")
         self.cycle()
         _bin, text = self.host.canary_binaries[0]
-        self.assertIn("listen: :40443", text)
-        self.assertFalse(os.path.exists(os.path.join(self.cfg["work_dir"], "canary")))
+        self.assertIn("listen: 192.0.2.4:40443", text)
+        self.assertIn("listen: 127.0.0.1:25414", text)
+        self.assertNotIn("127.0.0.1:25413", text)
+        self.assertIn("obfs:\n  type: gecko", text)
+        self.assertFalse(any(n.startswith("canary-") for n in os.listdir(self.cfg["work_dir"])))
         with open(self.cfg["engines"]["hysteria"]["config_path"]) as f:
             self.assertEqual(f.read(), CONFIG_YAML)     # production config untouched
 
@@ -376,7 +536,7 @@ class TestPromotion(Base):
         self.assertEqual(rep["idle_check"]["measured_bytes"], 2000)
         self.assertEqual(self.binary_bytes(), new)
 
-    def test_stats_unreachable_with_idle_defers_and_any_promotes(self):
+    def test_stats_unreachable_with_idle_defers_and_any_rolls_back(self):
         make_release(self.net, "v2.15.0")
         self.net.stats_fail = True
         rep, code = self.cycle()
@@ -384,8 +544,8 @@ class TestPromotion(Base):
         self.assertEqual(self.binary_bytes(), self.old)
         self.cfg["engines"]["hysteria"]["promote_when"] = "any"
         rep, code = self.cycle()
-        self.assertEqual(rep["result"], "promoted")
-        self.assertEqual(rep["evidence"], "service-only")
+        self.assertEqual(rep["result"], "inconclusive")
+        self.assertEqual(self.binary_bytes(), self.old)
 
     def test_promote_when_any_ignores_online(self):
         self.cfg["engines"]["hysteria"]["promote_when"] = "any"
@@ -394,20 +554,20 @@ class TestPromotion(Base):
         self.grow_on_poll()
         self.assertEqual(self.cycle()[0]["result"], "promoted")
 
-    def test_service_only_promotion_without_stats(self):
+    def test_service_only_promotion_without_stats_is_deferred(self):
         Base.stats = False
         self.addCleanup(setattr, Base, "stats", True)
         self.setUp()
         self.cfg["engines"]["hysteria"]["promote_when"] = "any"
-        new = make_release(self.net, "v2.15.0")
+        make_release(self.net, "v2.15.0")
         rep, code = self.cycle()
-        self.assertEqual((rep["result"], rep["evidence"], code), ("promoted", "service-only", 0))
+        self.assertEqual((rep["result"], code), ("deferred", 0))
         lk = self.lock()
-        self.assertEqual(lk["current"]["version"], "v2.15.0")
+        self.assertEqual(lk["current"]["version"], "v2.14.0")
         self.assertEqual(lk["evidence"], "service-only")
         self.assertIsNone(lk["candidate"])
-        self.assertEqual(self.binary_bytes(), new)
-        self.assertEqual(self.host.calls, [("restart", "flint-hysteria")])
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
 
     def test_post_promotion_success_inline(self):
         new = make_release(self.net, "v2.15.0")
@@ -426,15 +586,14 @@ class TestPromotion(Base):
         self.assertTrue(all("TOPSECRET" not in str(h) or h == {"Authorization": "TOPSECRET"}
                             for h in self.net.seen_headers))
 
-    def test_verification_timeout_rolls_back_and_blocks(self):
+    def test_verification_without_wan_control_rolls_back_without_blocking(self):
         make_release(self.net, "v2.15.0")
         self.net.traffic = {"router": {"tx": 100, "rx": 100}}    # never grows
         rep, code = self.cycle()
-        self.assertEqual((rep["result"], code), ("rolled-back", eu.EXIT_ROLLBACK))
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
         lk = self.lock()
         self.assertEqual(lk["current"]["version"], "v2.14.0")
-        self.assertEqual(lk["blocked"][0]["version"], "v2.15.0")
-        self.assertEqual(lk["blocked"][0]["reason"], "no router traffic within window")
+        self.assertEqual(lk["blocked"], [])
         self.assertIsNone(lk["candidate"])
         self.assertEqual(self.binary_bytes(), self.old)
         self.assertEqual(self.host.calls.count(("restart", "flint-hysteria")), 2)
@@ -448,20 +607,70 @@ class TestPromotion(Base):
         self.assertEqual(self.lock()["candidate"]["stage"], "verifying")
         self.host.t += 600
         self.assertEqual(self.cycle()[0]["result"], "verifying")
-        self.host.t += 7200       # timer is longer than the window; growth is checked first
+        self.host.t += 30         # follow-up while the verification window is open
         self.net.traffic = {"router": {"tx": 10**6, "rx": 10**6}}
         rep, code = self.cycle()
         self.assertEqual((rep["verification"], code), ("verified", 0))
         self.assertEqual(self.lock()["evidence"], "router-traffic")
+
+    def test_decreasing_counters_do_not_supply_warm_verification_growth(self):
+        self.cfg["engines"]["hysteria"]["verify_inline"] = False
+        self.net.traffic = {"router": {"tx": 1_000_000, "rx": 1_000_000}}
+        make_release(self.net, "v2.15.0")
+        self.assertEqual(self.cycle()[0]["result"], "verifying")
+        self.net.traffic = {"router": {"tx": 999_000, "rx": 999_000}}
+        self.assertEqual(self.cycle()[0]["result"], "verifying")
+        self.net.traffic = {"router": {"tx": 1_008_000, "rx": 1_008_000}}
+        self.assertEqual(self.cycle()[0]["verification"], "verified")
+
+    def test_warm_stats_cannot_qualify_a_binary_replaced_on_disk(self):
+        self.cfg["engines"]["hysteria"]["verify_inline"] = False
+        make_release(self.net, "v2.15.0")
+        self.assertEqual(self.cycle()[0]["result"], "verifying")
+        get_json = self.net.get_json
+
+        def replace_disk_binary(url, headers=None):
+            if url.endswith("/traffic"):
+                with open(self.binary, "wb") as f:
+                    f.write(elf("v2.16.0"))
+            return get_json(url, headers)
+
+        self.net.traffic = {"router": {"tx": 1_000_000, "rx": 1_000_000}}
+        self.net.get_json = replace_disk_binary
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.lock()["last_good"]["sha256"], sha(self.old))
+        self.assertFalse(os.path.exists(self.binary + ".last-good-v2.15.0"))
 
     def test_deferred_verification_expiry_rolls_back(self):
         self.cfg["engines"]["hysteria"]["verify_inline"] = False
         make_release(self.net, "v2.15.0")
         self.cycle()
         self.host.t += 7200
+        self.net.traffic = {"router": {"tx": 1000000, "rx": 1000000}}
         rep, code = self.cycle()
-        self.assertEqual((rep["result"], code), ("rolled-back", eu.EXIT_ROLLBACK))
+        self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
         self.assertEqual(self.lock()["current"]["version"], "v2.14.0")
+
+    def test_invalid_previous_binary_backup_prevents_restart(self):
+        self.cycle()
+        backup = self.binary + ".last-good-v2.14.0"
+        os.unlink(backup)
+        make_release(self.net, "v2.15.0")
+        copy_atomic = eu.copy_atomic
+
+        def copy_changed(source, destination):
+            copy_atomic(source, destination)
+            if destination == backup:
+                with open(destination, "wb") as f:
+                    f.write(elf("v2.16.0"))
+
+        with mock.patch.object(eu, "copy_atomic", side_effect=copy_changed):
+            with self.assertRaisesRegex(eu.UpdaterError, "previous binary backup checksum mismatch"):
+                self.cycle()
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.assertEqual(self.host.calls, [])
 
     def test_service_failure_rolls_back_and_blocks(self):
         make_release(self.net, "v2.15.0")
@@ -475,7 +684,7 @@ class TestPromotion(Base):
 
     def test_restart_failure_rolls_back(self):
         make_release(self.net, "v2.15.0")
-        self.host.restart_rc = 1
+        self.host.failed_restarts = {1}
         rep, code = self.cycle()
         self.assertEqual(rep["result"], "rolled-back")
         self.assertEqual(self.binary_bytes(), self.old)
@@ -497,7 +706,7 @@ class TestPromotion(Base):
 
 class TestLockFile(Base):
     def test_format_permissions_and_atomicity(self):
-        self.cycle(apply=False)
+        self.cycle()
         with open(self.cfg["lock_path"]) as f:
             data = json.load(f)
         self.assertEqual(data["format"], "flr-compat-lock-v1")
@@ -577,7 +786,8 @@ class TestKernelGate(Base):
             self.assertEqual(eu.main(["--config", self.cfg_path, "gate"], self.host, self.net), eu.EXIT_UNSAFE)
 
     def test_service_unit_keeps_module_tree_visible(self):
-        unit = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "flr-engine-update.service")).read()
+        with open(os.path.join(os.path.dirname(HERE), "flr-engine-update.service")) as f:
+            unit = f.read()
         self.assertNotIn("ProtectKernelModules=true", unit)
         self.assertIn("CapabilityBoundingSet=~CAP_SYS_MODULE", unit)
 
@@ -596,7 +806,7 @@ class TestCLI(Base):
 
     def test_status_shape(self):
         self.assertIsNone(json.loads(self.run_cli("status")[1])["engines"]["hysteria"]["current"])  # fresh lock
-        self.cycle(apply=False)                            # bootstraps current from the binary
+        self.cycle()                                      # bootstraps current from the binary
         code, out, _ = self.run_cli("status")
         data = json.loads(out)
         self.assertEqual(code, 0)
@@ -622,6 +832,7 @@ class TestCLI(Base):
         code, out, _ = self.run_cli("run")
         self.assertEqual(json.loads(out)["result"], "update-available")
         self.assertEqual(self.binary_bytes(), self.old)
+        self.assertFalse(os.path.exists(self.cfg["lock_path"]))
 
     def test_hold_unhold_unblock_rollback(self):
         self.assertEqual(self.run_cli("hold", "hysteria")[0], 0)
@@ -767,12 +978,6 @@ class TestReviewFixes(Base):
         # eligible again on the next run
         self.assertEqual(self.cycle(apply=False)[0]["available"], "v2.15.0")
 
-    def test_online_without_traffic_is_blocked(self):
-        make_release(self.net, "v2.15.0")
-        rep, code = self.cycle()      # online stays 1, counters never move
-        self.assertEqual(rep["result"], "rolled-back")
-        self.assertEqual(self.lock()["blocked"][0]["version"], "v2.15.0")
-
     def test_control_canary_failure_is_inconclusive(self):
         make_release(self.net, "v2.15.0")
         self.host.canary_queue = [(False, "port in use"), (False, "port in use")]
@@ -780,7 +985,7 @@ class TestReviewFixes(Base):
         self.assertEqual((rep["result"], code), ("inconclusive", eu.EXIT_TRANSIENT))
         lk = self.lock()
         self.assertEqual(lk["blocked"], [])
-        self.assertIn("control", lk["last_attempt"]["reason"])
+        self.assertEqual(lk["last_attempt"]["result"], "inconclusive")
         self.assertEqual(len(self.host.canary_binaries), 2)
         self.assertEqual(self.host.canary_binaries[1][0], self.binary)   # control used the current binary
         self.assertEqual(self.host.calls, [])
@@ -794,6 +999,20 @@ class TestReviewFixes(Base):
         self.assertEqual(lk["blocked"], [])
         self.assertEqual(lk["last_attempt"]["result"], "environment-failure")
         self.assertEqual(self.binary_bytes(), self.old)
+
+    def test_failed_rollback_restart_retains_recovery_marker(self):
+        make_release(self.net, "v2.15.0")
+        self.host.failed_restarts = {1, 2}
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("environment-failure", eu.EXIT_ROLLBACK))
+        self.assertEqual(self.lock()["candidate"]["stage"], "installing")
+        self.assertEqual(self.lock()["blocked"], [])
+        self.assertEqual(self.binary_bytes(), self.old)
+        self.net.releases.clear()
+        rep, code = self.cycle()
+        self.assertEqual((rep["result"], code), ("up-to-date", 0))
+        self.assertIsNone(self.lock()["candidate"])
+        self.assertEqual(self.host.calls, [("restart", "flint-hysteria")] * 3)
 
     def test_service_unit_allows_netlink(self):
         with open(os.path.join(os.path.dirname(HERE), "flr-engine-update.service")) as f:

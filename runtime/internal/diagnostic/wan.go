@@ -8,7 +8,8 @@ import (
 )
 
 type WANResult struct {
-	At               time.Time     `json:"at"`
+	At               time.Time `json:"at"`
+	sampledAt        time.Time
 	Probe            health.Result `json:"probe"`
 	LinkKnown        bool          `json:"link_known"`
 	LinkUp           bool          `json:"link_up"`
@@ -50,7 +51,8 @@ func (w *WAN) Start(ctx context.Context) bool {
 			r.Probe = health.Result{NotMeasured: "timeout"}
 		}
 		r.Probe = probe(r.Probe)
-		r.At = time.Now().UTC()
+		r.sampledAt = time.Now()
+		r.At = r.sampledAt.UTC()
 		w.mu.Lock()
 		w.result = r
 		w.busy = false

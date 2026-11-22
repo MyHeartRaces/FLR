@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -52,6 +53,54 @@ type CanaryResult struct {
 	Probe        string // "start", "listen", "https", "udp", "alive"
 	Detail       string
 	Inconclusive bool
+	HTTPSBytes   int64
+	HTTPSMillis  int64
+	UDPAnswers   int
+}
+
+// RelayQualificationResult contains measured traffic without private probe
+// details. The caller binds it to an authenticated attempt and profile.
+type RelayQualificationResult struct {
+	Outcome     string `json:"outcome"`
+	HTTPSBytes  int64  `json:"https_bytes"`
+	HTTPSMillis int64  `json:"https_ms"`
+	UDPAnswers  int    `json:"udp_answers"`
+}
+
+// RunRelayQualification runs a bounded isolated Hysteria traffic canary. The
+// caller supplies a trusted native Hysteria target pinned to the intended
+// relay address and port and rendered with the live WAN binding and outer mark.
+func RunRelayQualification(ctx context.Context, bin string, t Target, workDir string, socksPort int) RelayQualificationResult {
+	indeterminate := RelayQualificationResult{Outcome: "inconclusive"}
+	if !t.UDP || t.ConfigError != nil || ctx.Err() != nil || socksPort < 1024 || socksPort > 65535 {
+		return indeterminate
+	}
+	config, err := TransformConfig(t.Config, socksPort)
+	if err != nil {
+		return indeterminate
+	}
+	dir, err := os.MkdirTemp(workDir, "flr-relay-canary-")
+	if err != nil {
+		return indeterminate
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "sing-box.json")
+	if err := os.WriteFile(path, config, 0600); err != nil {
+		return indeterminate
+	}
+	result := (&SocksCanary{}).Run(ctx, bin, t, path, CanaryParams{Port: socksPort, Seconds: 60, MinBytes: 8 << 20})
+	outcome := "failed"
+	switch {
+	case ctx.Err() != nil:
+		outcome = "inconclusive"
+	case result.OK:
+		outcome = "passed"
+	case result.Inconclusive && result.Probe != "https" && result.Probe != "udp":
+		// A completed traffic probe can fail its own timeout. The relay
+		// compares that result with the current binary before blocking.
+		outcome = "inconclusive"
+	}
+	return RelayQualificationResult{outcome, result.HTTPSBytes, result.HTTPSMillis, result.UDPAnswers}
 }
 
 // Canary starts the candidate on a transformed config and measures through it.
@@ -91,7 +140,7 @@ type SocksCanary struct {
 	UDPTimeout time.Duration
 }
 
-func (c *SocksCanary) Run(ctx context.Context, bin string, t Target, cfgPath string, p CanaryParams) CanaryResult {
+func (c *SocksCanary) Run(ctx context.Context, bin string, t Target, cfgPath string, p CanaryParams) (result CanaryResult) {
 	if err := ctx.Err(); err != nil {
 		return CanaryResult{Probe: "start", Detail: err.Error(), Inconclusive: true}
 	}
@@ -150,12 +199,20 @@ func (c *SocksCanary) Run(ctx context.Context, bin string, t Target, cfgPath str
 	if err != nil {
 		return CanaryResult{Probe: "listen", Detail: err.Error(), Inconclusive: true}
 	}
-	if got, err := c.probeHTTPS(ctx, proxy, p); err != nil {
+	var answers int
+	start := time.Now()
+	got, err := c.probeHTTPS(ctx, proxy, p)
+	elapsed := time.Since(start).Milliseconds()
+	defer func() {
+		result.HTTPSBytes, result.HTTPSMillis, result.UDPAnswers = got, elapsed, answers
+	}()
+	if err != nil {
 		return CanaryResult{Probe: "https", Detail: fmt.Sprintf("%d/%d bytes: %v", got, p.MinBytes, err), Inconclusive: interrupted(ctx, err)}
 	}
 	if t.UDP {
-		if n, err := c.probeUDP(ctx, proxy, 3); err != nil {
-			return CanaryResult{Probe: "udp", Detail: fmt.Sprintf("%d/3 DNS answers: %v", n, err), Inconclusive: interrupted(ctx, err)}
+		answers, err = c.probeUDP(ctx, proxy, 3)
+		if err != nil {
+			return CanaryResult{Probe: "udp", Detail: fmt.Sprintf("%d/3 DNS answers: %v", answers, err), Inconclusive: interrupted(ctx, err)}
 		}
 	}
 	// Recheck the same listener after the last byte/answer. A zombie has

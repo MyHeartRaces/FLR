@@ -177,7 +177,7 @@ func homeSetup(guard string, router lan.LAN) error {
 			return e
 		}
 	}
-	if e = set("dhcp", "@dnsmasq[0].port", "1053"); e != nil {
+	if e = set("dhcp", "@dnsmasq[0].port", policyDNSMasqPort); e != nil {
 		return e
 	}
 	if e = set("dhcp", "@dnsmasq[0].noresolv", "1"); e != nil {

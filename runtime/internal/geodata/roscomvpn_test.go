@@ -284,7 +284,7 @@ func TestDeepLinksAndProfileValues(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if issue(o.Report.NotApplied, "GlobalProxy", "unlisted destinations through the VPN") == nil {
+	if issue(o.Report.NotApplied, "GlobalProxy", "Choose Tunnel to send unlisted destinations through the ISP") == nil {
 		t.Errorf("GlobalProxy=false not reported: %+v", o.Report.NotApplied)
 	}
 	if geosite, geoip := p.Needs(); geosite || geoip {

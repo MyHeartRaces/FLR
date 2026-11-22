@@ -16,6 +16,7 @@ import (
 	"github.com/MyHeartRaces/FLR/runtime/internal/config"
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
 	"github.com/MyHeartRaces/FLR/runtime/internal/dataplane"
+	"github.com/MyHeartRaces/FLR/runtime/internal/diagnostic"
 	dnsbroker "github.com/MyHeartRaces/FLR/runtime/internal/dns"
 	"github.com/MyHeartRaces/FLR/runtime/internal/health"
 	"github.com/MyHeartRaces/FLR/runtime/internal/profile"
@@ -251,8 +252,21 @@ func (b *ProcessBackend) Start(ctx context.Context, p profile.Profile) error {
 	return b.StartBudget(ctx, ctx, p)
 }
 func (b *ProcessBackend) StartBudget(lifetime, ctx context.Context, p profile.Profile) error {
+	return b.startBudget(lifetime, ctx, p, nil)
+}
+func (b *ProcessBackend) startBudget(lifetime, ctx context.Context, p profile.Profile, a *diagnostic.Attempt) (err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	start := time.Now()
+	defer func() {
+		if a != nil && a.Apply.Outcome == "" {
+			stageErr := err
+			if err != nil && ctx.Err() != nil {
+				stageErr = ctx.Err()
+			}
+			a.Apply = operationStage(start, stageErr)
+		}
+	}()
 	if len(b.children) > 0 {
 		return fmt.Errorf("proxy slot already running")
 	}
@@ -340,19 +354,37 @@ func (b *ProcessBackend) StartBudget(lifetime, ctx context.Context, p profile.Pr
 		go func(c *child) { cmd.Wait(); c.exited.Store(true); close(c.done) }(c)
 	}
 	// Wait for the owned TUN to be created before installing its policy route.
+	if a != nil {
+		a.Apply = attemptStage(start, "ok")
+	}
+	ready := time.Now()
 	deadline := time.NewTimer(3 * time.Second)
 	defer deadline.Stop()
 	for !health.Present(contract.Gecko) {
 		select {
 		case <-ctx.Done():
+			if a != nil {
+				a.Ready = operationStage(ready, ctx.Err())
+			}
 			return fmt.Errorf("engine startup cancelled")
 		case <-deadline.C:
+			if a != nil {
+				a.Ready = attemptStage(ready, "timeout")
+			}
 			return fmt.Errorf("engine TUN startup timeout")
 		case <-time.After(25 * time.Millisecond):
 		}
 	}
 	// The slot route must exist before health probes or LAN selection can use it.
-	if e = dataplane.EnsureRoutes(); e != nil {
+	if a != nil {
+		a.Ready = attemptStage(ready, "ok")
+	}
+	routes := time.Now()
+	e = dataplane.EnsureRoutes()
+	if a != nil {
+		a.Routes = operationStage(routes, e)
+	}
+	if e != nil {
 		for _, c := range b.children {
 			c.cancel()
 		}

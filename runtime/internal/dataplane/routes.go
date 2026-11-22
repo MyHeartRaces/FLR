@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/netip"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -34,28 +34,63 @@ type Snapshot struct {
 	BootTableExists bool
 }
 
-var ownedPriorities = []int{1770, 1771, 1772, 1780, 1781}
+const (
+	firstRouteTable    = 770
+	terminalClassTable = 773
+	lastRouteTable     = 774
+)
+
+var ownedRouteDevices = map[int]string{
+	contract.Table(contract.AWG):        "flr_awg",
+	contract.Table(contract.Gecko):      "flr-hy",
+	contract.Table(contract.VLESS):      "flr-vless",
+	contract.Table(contract.Continuity): contract.ContinuityDevice,
+}
+
+var channelPriorities = map[contract.Channel]int{
+	contract.AWG:        1770,
+	contract.Gecko:      1771,
+	contract.VLESS:      1772,
+	contract.Continuity: 1773,
+}
+
+var terminalClassRules = [...]Rule{
+	{Priority: 1780, Table: terminalClassTable, Mark: contract.ClassMark(contract.General), Mask: contract.ClassMask},
+	{Priority: 1781, Table: terminalClassTable, Mark: contract.ClassMark(contract.Games), Mask: contract.ClassMask},
+}
+
+func channelRule(channel contract.Channel) Rule {
+	return Rule{Priority: channelPriorities[channel], Table: contract.Table(channel), Mark: contract.ChannelMark(channel), Mask: contract.ChannelMask}
+}
+
+func reservedRule(priority int) (Rule, bool) {
+	for channel, reserved := range channelPriorities {
+		if priority == reserved {
+			return channelRule(channel), true
+		}
+	}
+	for _, rule := range terminalClassRules {
+		if priority == rule.Priority {
+			return rule, true
+		}
+	}
+	return Rule{}, false
+}
 
 func Preflight(s Snapshot) error {
 	for _, r := range s.Rules {
-		reserved := false
-		for _, n := range ownedPriorities {
-			if r.Priority == n {
-				reserved = true
-			}
-		}
+		expected, reserved := reservedRule(r.Priority)
 		if (reserved || r.Mask&contract.OwnedMask != 0) && !s.Own {
 			return fmt.Errorf("conflicting rule priority %d", r.Priority)
 		}
 		if s.Own && (reserved || r.Mask&contract.OwnedMask != 0) {
-			valid := (r.Priority == 1770 && r.Table == 770 && r.Mark == 0x10000000 && r.Mask == contract.ChannelMask) || (r.Priority == 1771 && r.Table == 771 && r.Mark == 0x20000000 && r.Mask == contract.ChannelMask) || (r.Priority == 1772 && r.Table == 772 && r.Mark == 0x30000000 && r.Mask == contract.ChannelMask) || (r.Priority == 1780 && r.Table == 773 && r.Mark == 0x01000000 && r.Mask == contract.ClassMask) || (r.Priority == 1781 && r.Table == 773 && r.Mark == 0x02000000 && r.Mask == contract.ClassMask)
-			if !valid {
+			if !reserved || r != expected {
 				return fmt.Errorf("owned state conflicts with rule priority %d", r.Priority)
 			}
 		}
 	}
 	for _, r := range s.Routes {
-		if r.Table < 770 || r.Table > 773 {
+		if r.Table < firstRouteTable || r.Table > lastRouteTable {
 			continue
 		}
 		if !s.Own {
@@ -64,7 +99,7 @@ func Preflight(s Snapshot) error {
 		if r.Destination != "" && r.Destination != "default" {
 			return fmt.Errorf("foreign prefix in owned table %d", r.Table)
 		}
-		dev := map[int]string{770: "flr_awg", 771: "flr-hy", 772: "flr-vless"}[r.Table]
+		dev := ownedRouteDevices[r.Table]
 		if !(r.Unreachable && r.Metric == 32767) && !(r.Device != "" && r.Device == dev && r.Metric == 100) {
 			return fmt.Errorf("foreign route in owned table %d", r.Table)
 		}
@@ -121,7 +156,7 @@ func currentSnapshotWith(output func(string, ...string) ([]byte, error)) (Snapsh
 		}
 		s.Rules = append(s.Rules, Rule{Priority: int(n("priority")), Table: int(n("table")), Mark: n("fwmark"), Mask: n("fwmask")})
 	}
-	for table := 770; table <= 773; table++ {
+	for table := firstRouteTable; table <= lastRouteTable; table++ {
 		b, e = output("ip", "-j", "-4", "route", "show", "table", strconv.Itoa(table))
 		if e != nil {
 			if native.Interrupted(e) {
@@ -197,6 +232,30 @@ func Apply(b Batch) error {
 			return e
 		}
 	}
+	if !b.Options.Continuity {
+		// Remove the stable lookup only after its old flows can fall through
+		// to the protected classes' terminal route and the new WAN guard.
+		return retireContinuityRoutes(snap, Run)
+	}
+	return nil
+}
+
+func retireContinuityRoutes(snap Snapshot, run func(string, ...string) error) error {
+	owned := channelRule(contract.Continuity)
+	table := strconv.Itoa(owned.Table)
+	for _, rule := range snap.Rules {
+		if rule != owned {
+			continue
+		}
+		if err := run("ip", "-4", "rule", "del", "pref", strconv.Itoa(rule.Priority), "fwmark", fmt.Sprintf("%#x/%#x", rule.Mark, rule.Mask), "lookup", table); err != nil {
+			return err
+		}
+	}
+	for _, route := range snap.Routes {
+		if route.Table == owned.Table {
+			return run("ip", "-4", "route", "flush", "table", table)
+		}
+	}
 	return nil
 }
 
@@ -226,11 +285,15 @@ func ensureRoutesWith(snap Snapshot, output func(string, ...string) ([]byte, err
 	if e = Preflight(snap); e != nil {
 		return e
 	}
-	for _, ch := range []contract.Channel{contract.AWG, contract.Gecko, contract.VLESS} {
-		dev := map[contract.Channel]string{contract.AWG: "flr_awg", contract.Gecko: "flr-hy", contract.VLESS: "flr-vless"}[ch]
+	for _, ch := range []contract.Channel{contract.AWG, contract.Gecko, contract.VLESS, contract.Continuity} {
+		if ch == contract.Continuity && !slices.Contains(snap.Rules, channelRule(ch)) {
+			continue
+		}
+		table := contract.Table(ch)
+		dev := ownedRouteDevices[table]
 		found := false
 		for _, r := range snap.Routes {
-			if r.Table == contract.Table(ch) && r.Device == dev && r.Metric == 100 {
+			if r.Table == table && r.Device == dev && r.Metric == 100 {
 				found = true
 			}
 		}
@@ -238,7 +301,7 @@ func ensureRoutesWith(snap Snapshot, output func(string, ...string) ([]byte, err
 			continue
 		}
 		if _, e = output("ip", "link", "show", "dev", dev); e == nil {
-			if e = run("ip", "-4", "route", "replace", "default", "dev", dev, "metric", "100", "table", strconv.Itoa(contract.Table(ch))); e != nil {
+			if e = run("ip", "-4", "route", "replace", "default", "dev", dev, "metric", "100", "table", strconv.Itoa(table)); e != nil {
 				return e
 			}
 		} else if native.Interrupted(e) {
@@ -246,28 +309,6 @@ func ensureRoutesWith(snap Snapshot, output func(string, ...string) ([]byte, err
 		}
 	}
 	return nil
-}
-func ConfigureDNS(port, testClient string) error {
-	n, e := strconv.Atoi(port)
-	if e != nil || n < 1 || n > 65535 {
-		return fmt.Errorf("invalid DNS port")
-	}
-	scope := `iifname "br-lan"`
-	if testClient != "" {
-		if _, e = netip.ParseAddr(testClient); e != nil {
-			return e
-		}
-		scope += " ip saddr " + testClient
-	}
-	batch := ""
-	if _, e = output("nft", "list", "chain", "inet", "flr", "dns"); e == nil {
-		batch = "delete chain inet flr dns\n"
-	} else if native.Interrupted(e) {
-		return e
-	}
-	batch += "add chain inet flr dns { type nat hook prerouting priority -100; policy accept; }\n"
-	batch += fmt.Sprintf("add rule inet flr dns %s meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 redirect to :%d\n", scope, n)
-	return Nft(batch)
 }
 
 // Deactivate restores validated pre-FLR configuration while leaving the

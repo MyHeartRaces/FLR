@@ -377,6 +377,18 @@ test('diagnostic export accepts eviction behind cursor but rejects unread loss i
  }
 });
 
+test('diagnostic export downloads attempt-only pages and detects unread attempt loss',async()=>{
+ const a=api({ok:true,data:{}}),meta={boot:'boot',instance:'0123456789abcdef',source:'a'.repeat(40),version:'0.8-runtime',last_sequence:4,dropped_rounds:0,dropped_decisions:0,dropped_round_sequence:0,dropped_decision_sequence:0};
+ const first={...meta,rounds:[],decisions:[],attempts:[{sequence:2}],next:2,more:true};
+ const second={...meta,dropped_attempt_sequence:2,dropped_attempts:1,rounds:[{sequence:3}],decisions:[],attempts:[{sequence:4}],next:4,more:false};
+ const cursors=[];
+ const result=await a.collectDiagnostics(async value=>{cursors.push(value);return value==='0'?first:second;});
+ assert.deepEqual(cursors,['0','2:4']);assert.equal(result.instance,meta.instance);assert.equal(result.attempts.map(record=>record.sequence).join(','),'2,4');
+ for(const tail of [{...second,dropped_attempt_sequence:3},{...second,instance:'fedcba9876543210'},{...second,attempts:[{sequence:2}]}]) {
+  await assert.rejects(a.collectDiagnostics(async value=>value==='0'?first:tail),/измени|потер|диагностик/i);
+ }
+});
+
 test('no view parses controller or user strings as HTML',async()=>{
  const x='<img src=x>';
  const d=proxyFixture();for(const c of d.connections){c.name+=x;c.group+=x;c.endpoint+=x;}
@@ -479,7 +491,7 @@ function routingFixture() {
  };
 }
 async function routingHarness(page,canWrite=true,respond) {
- const fixture=routingFixture(),transport={calls:[],declarations:[]},b=browser();
+ const fixture=routingFixture(),transport={calls:[],declarations:[]},b=browser(),pollers=[];
  const entries=Array.from({length:2500},(_,i)=>({kind:'domain',value:'host'+i+'.example.org'}));
  const reply=(request,method)=>{
   const r=request.routing||{};
@@ -492,10 +504,10 @@ async function routingHarness(page,canWrite=true,respond) {
   }
  };
  const flr=api(reply,canWrite,transport,{document:b.document,Blob:b.Blob,URL:b.URL,setTimeout:f=>setImmediate(f)});
- const scope={view:{extend:x=>x},E:luciElement,flr,L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:b.window,document:b.document};
+ const scope={view:{extend:x=>x},E:luciElement,flr,poll:{add:callback=>pollers.push(callback)},L:{hasViewPermission:()=>canWrite,url:(...p)=>'/cgi-bin/luci/'+p.join('/')},window:b.window,document:b.document};
  const mod=run(fs.readFileSync(path.join(root,'htdocs/luci-static/resources/view/flr/routing',page+'.js'),'utf8'),scope,page);
  const tree=mod.render(await mod.load());
- return {tree,fixture,transport,flr,browser:b.record,nodes:()=>allNodes(tree),text:()=>JSON.stringify(tree),
+ return {tree,fixture,transport,flr,pollers,browser:b.record,nodes:()=>allNodes(tree),text:()=>JSON.stringify(tree),
   find(label){return allNodes(tree).find(n=>n.tag==='button'&&(n.children===label || n.attrs['aria-label']===label));},
   async click(label){const button=this.find(label);assert.ok(button,'missing button '+label);return button.attrs.click({currentTarget:button});},
   requests(){return transport.calls.map(c=>({method:c.method,...JSON.parse(c.request)}));}};
@@ -510,7 +522,7 @@ test('routing menu adds Overview, Custom rules and Import & export tabs',()=>{
 test('routing overview shows the policy and pages ruleset entries without dumping them',async()=>{
  const h=await routingHarness('overview');
  assert.deepEqual(h.requests()[0],{method:'read',operation:'routing-policy'});
- const text=h.text();assert.match(text,/Используется частная политика/);assert.match(text,/всего 2500 · доменных 2500 · адресных 0/);assert.match(text,/выключен в этом режиме/);assert.match(text,/Резервная копия|резервная копия/);
+ const text=h.text();assert.match(text,/Установлена частная политика/);assert.match(text,/всего 2500 · доменных 2500 · адресных 0/);assert.match(text,/выключен в этом режиме/);assert.match(text,/Резервная копия|резервная копия/);
  assert.equal(h.nodes().some(n=>n.parsedFrom),false,'policy text parsed as HTML');
  await h.click('Просмотреть vpn-services');
  assert.deepEqual(h.requests().at(-1),{method:'read',operation:'routing-entries',routing:{ruleset:'vpn-services',query:'',offset:0,limit:100}});
@@ -522,16 +534,87 @@ test('routing overview shows the policy and pages ruleset entries without dumpin
  assert.ok(h.requests().every(r=>r.method==='read'),'browsing writes nothing');
  const ro=await routingHarness('overview',false);assert.equal(ro.find('Просмотреть vpn-services').disabled,false,'reading needs no write permission');
 });
-test('routing mode is a bounded select on the Routing overview',async()=>{
+test('routing mode offers exactly Full proxy, Tunnel and Direct',async()=>{
  const h=await routingHarness('overview'),select=h.nodes().find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
  assert.ok(select);assert.equal(select.value,'full_domestic');
- assert.deepEqual(JSON.parse(JSON.stringify(select.children.map(o=>[o.attrs.value,[].concat(o.children)[0]]))),[['split','Раздельный: списки из частной политики'],['full_domestic','Всё через VPN, кроме обязательных direct-сервисов'],['full','Всё через VPN']]);
- for(const mode of ['full','full_domestic','split']){select.value=mode;await h.click('Сохранить режим маршрутизации');assert.deepEqual(h.requests().at(-1),{method:'write',operation:'settings',settings:{routing_mode:mode}});}
+ assert.deepEqual(Array.from(select.children).filter(o=>!o.disabled).map(o=>[o.attrs.value,o.children[0]]),[['split','Полный прокси'],['tunnel','Туннель'],['direct','Напрямую']]);
+ for(const mode of ['split','tunnel','direct']){select.value=mode;await h.click('Сохранить режим маршрутизации');assert.deepEqual(h.requests().filter(r=>r.method==='write').at(-1),{method:'write',operation:'settings',settings:{routing_mode:mode}});}
+ for(const mode of ['full','full_domestic','proxy']) {
+  const legacy=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:true,data:{...routingFixture().policy,mode}}:undefined);
+  const menu=legacy.nodes().find(n=>n.attrs['data-field']==='routing_mode');
+  assert.equal(menu.value,mode);
+  assert.ok(Array.from(menu.children).find(o=>o.attrs.value===mode)?.disabled);
+  await legacy.click('Сохранить режим маршрутизации');
+  assert.equal(legacy.requests().some(r=>r.method==='write'),false);
+ }
  select.value='everything';const before=h.requests().length;await h.click('Сохранить режим маршрутизации');assert.equal(h.requests().length,before);assert.match(h.transport.notes.at(-1).text,/режим/);
  const unknown=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:true,data:{...routingFixture().policy,mode:'<b>future</b>'}}:undefined),current=unknown.nodes().find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
  assert.equal(current.value,'<b>future</b>');assert.equal(unknown.nodes().some(n=>n.tag==='b'),false);
  const ro=await routingHarness('overview',false);assert.equal(ro.nodes().find(n=>n.attrs&&n.attrs['data-field']==='routing_mode').disabled,true);assert.equal(ro.find('Сохранить режим маршрутизации').disabled,true);
  const old=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:false,data:null,error:'unknown operation'}:undefined);assert.match(old.text(),/unknown operation/);
+});
+test('routing overview distinguishes selected Direct from applied Full proxy',async()=>{
+ const p=routingFixture().policy;
+ const h=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:true,data:{...p,source:'image',mode:'direct',live:{...p.live,applied_mode:'split'}}}:undefined);
+ const select=h.nodes().find(n=>n.tag==='select'&&n.attrs['data-field']==='routing_mode');
+ assert.equal(select.value,'direct');
+ assert.ok(select.attrs['aria-describedby'],'selected mode has no accessible description');
+ const description=h.nodes().find(n=>n.attrs.id===select.attrs['aria-describedby']);
+ assert.match(description.children.join(''),/через провайдера/);
+ assert.match(description.children.join(''),/обычный DNS роутера/);
+ assert.match(h.text(),/Действующие соединения сохраняют свои маршруты/);
+ assert.match(h.text(),/Полный прокси/);
+ assert.match(h.text(),/Ожидает применения/);
+ assert.doesNotMatch(h.text(),/всё, кроме локальных назначений, идёт через VPN/);
+ select.value='split';select.attrs.change();
+ assert.match(description.children.join(''),/через VPN/);
+ select.value='tunnel';select.attrs.change();
+ assert.match(description.children.join(''),/Собственные правила прямой маршрутизации отключены/);
+});
+test('routing mode save tracks the applied mode and refreshes the ruleset activity',async()=>{
+ const p=routingFixture().policy;
+ const h=await routingHarness('overview',true,r=>{
+  if(r.operation==='routing-policy')return {ok:true,data:p};
+  if(r.operation==='settings'){
+   p.mode=r.settings.routing_mode;
+   p.live={...p.live,vpn:false,pending:true};
+   return {ok:true,data:{routing_mode:p.mode}};
+  }
+ });
+ const directEssential=h.nodes().find(n=>n.attrs['data-ruleset']==='direct-essential');
+ assert.match(JSON.stringify(directEssential),/используется/);
+ h.nodes().find(n=>n.attrs['data-field']==='routing_mode').value='direct';
+ await h.click('Сохранить режим маршрутизации');
+ assert.match(h.text(),/Ожидает применения: Напрямую/);
+ assert.match(JSON.stringify(directEssential),/используется/);
+ p.live={...p.live,vpn:false,applied_mode:'direct',pending:false};
+ p.rulesets.find(rs=>rs.name==='direct-essential').active=false;
+ assert.equal(h.pollers.length,1,'the status does not get refreshed while the mode is pending');
+ await h.pollers[0]();
+ assert.match(h.text(),/Активный режим маршрутизации: Напрямую/);
+ assert.match(JSON.stringify(directEssential),/выключен в этом режиме/);
+ assert.equal(h.nodes().find(n=>n.attrs['data-field']==='routing_mode').children.length,3);
+});
+test('Direct mode displays saved custom rules as inactive and allows editing them',async()=>{
+ const p=routingFixture().policy;
+ const h=await routingHarness('rules',true,r=>r.operation==='routing-policy'?{ok:true,data:{...p,mode:'direct',live:{...p.live,vpn:false,applied_mode:'direct'}}}:undefined);
+ assert.match(h.text(),/Режим «Напрямую» обходит собственные правила/);
+ h.nodes().find(n=>n.attrs['data-field']==='new-value').value='example.org';
+ await h.click('Добавить правило');
+ assert.equal(h.requests().some(r=>r.operation==='routing-rule-add'),true);
+ assert.match(h.transport.notes.map(n=>n.text).join(' '),/Правила сохранены/);
+});
+test('routing overview follows a pending same-mode policy reload',async()=>{
+ const p=routingFixture().policy;
+ p.mode='split';
+ p.live={...p.live,applied_mode:p.mode,pending:true};
+ const h=await routingHarness('overview',true,r=>r.operation==='routing-policy'?{ok:true,data:p}:undefined);
+ const status=h.nodes().find(n=>n.tag==='p'&&n.attrs['aria-live']==='polite'&&!n.attrs.id);
+ assert.match(status.children.join(''),/Ожидает применения/);
+ p.live={...p.live,pending:false,last_apply:'2026-11-19T00:05:00Z'};
+ await h.pollers[0]();
+ assert.match(status.children.join(''),/Активный режим маршрутизации: Полный прокси/);
+ assert.match(h.text(),/Последнее применение: 2026-11-19T00:05:00Z/);
 });
 test('custom rules: add, toggle, edit and delete carry the revision; conflicts reload the list',async()=>{
  const h=await routingHarness('rules');
@@ -618,7 +701,7 @@ const WHITELIST='https://raw.githubusercontent.com/hydraponique/roscomvpn-routin
 function roscomResult(installed){return {dry_run:!installed,installed,download_path:'vpn-awg',source:WHITELIST,backup_present:installed,apply:installed?{applied:true,source:'overlay',mode:'split'}:undefined,
  report:{name:'Synthetic <img src=x>',rulesets:{'roscom-direct-ips':{total:3,imported:3,counts:{ip_cidr:3}},'local-ips':{total:5,imported:1,counts:{ip_cidr:5}}},categories:[{list:'DirectIp',name:'geoip:direct',entries:3}],
   skipped:[{field:'DirectIp',code:'ipv6',reason:'IPv6: FLR routes IPv4 only',count:2,examples:['2001:db8::/32']},{field:'DirectSites',code:'category_unreadable',args:['truncated <b>data</b>'],reason:'unreadable category: truncated <b>data</b>',count:1},{field:'ProxySites',code:'future_code',reason:'future English reason <img src=x>',count:1}],
-  not_applied:[{field:'BlockSites',code:'block_not_applied',reason:'FLR does not block destinations',count:3}],notes:[{code:'note_split_only',text:'DirectSites and DirectIp apply in routing mode split only'},{code:'note_bare_keywords',args:['4'],text:'4 bare entries'}]}};}
+  not_applied:[{field:'BlockSites',code:'block_not_applied',reason:'FLR does not block destinations',count:3},{field:'GlobalProxy',code:'global_proxy',reason:'Unmatched traffic follows the configured mode',count:1}],notes:[{code:'note_split_only',text:'DirectSites and DirectIp apply in routing mode split only'},{code:'note_bare_keywords',args:['4'],text:'4 bare entries'}]}};}
 test('RoscomVPN preview sends the preset URL as a dry run and shows the report as text',async()=>{
  const h=await routingHarness('transfer',true,r=>r.operation==='routing-roscomvpn-import'?{ok:true,data:{...roscomResult(false),pending:false}}:undefined);
  const url=h.nodes().find(n=>n.attrs&&n.attrs['data-field']==='roscomvpn_url');
@@ -628,10 +711,11 @@ test('RoscomVPN preview sends the preset URL as a dry run and shows the report a
  assert.equal(h.browser.confirms.length,0,'a preview changes nothing and needs no confirmation');
  const text=h.text();
  assert.match(text,/Только предпросмотр: ничего не изменено/);assert.match(text,/через VPN \(AWG\)/);assert.match(text,/roscom-direct-ips/);
- assert.match(text,/DirectIp: записей 2 — IPv6: FLR маршрутизирует только IPv4/);assert.match(text,/BlockSites: записей 3 — FLR не блокирует назначения/);assert.match(text,/geoip:direct · 3/);
+ assert.match(text,/DirectIp: записей 2 — IPv6: FLR маршрутизирует только IPv4/);assert.match(text,/BlockSites: записей 3 — FLR маршрутизирует эти назначения по остальным спискам и выбранному режиму/);assert.match(text,/geoip:direct · 3/);
+ assert.match(text,/GlobalProxy: записей 1 — FLR сохраняет выбранный режим маршрутизации/);
  // Codes are translated with their arguments; an unknown code falls back to the router's English text.
  assert.match(text,/категория не читается: truncated <b>data<\/b>/);assert.match(text,/future English reason/);
- assert.match(text,/действуют только в режиме маршрутизации split/);assert.match(text,/Записей без префикса: 4;/);
+ assert.match(text,/действуют в режиме «Полный прокси» \(split\)/);assert.match(text,/Записей без префикса: 4;/);
  assert.doesNotMatch(text,/apply in routing mode split only/,'a known note code must be shown translated');
  assert.equal(h.nodes().some(n=>n.parsedFrom),false,'report text parsed as HTML');
  await h.click('Профиль Default');assert.match(url.value,/HAPP\/DEFAULT\.JSON$/);

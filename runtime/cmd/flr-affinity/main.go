@@ -4,10 +4,12 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"os"
+
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
 	"github.com/MyHeartRaces/FLR/runtime/internal/dataplane"
 	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
-	"os"
 )
 
 func main() {
@@ -30,6 +32,13 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
+	anchor, err := dataplane.Build(p, dataplane.Options{
+		LAN: "br-lan", WAN: "eth1", Continuity: true, Replace: true,
+		Selection: contract.Selection{General: contract.Continuity, Games: contract.Continuity},
+	})
+	if err != nil {
+		return err
+	}
 	recovered, err := dataplane.SelectionBatch(contract.Selection{General: contract.AWG, Games: contract.AWG}, false)
 	if err != nil {
 		return err
@@ -38,5 +47,22 @@ func run(dir string) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(os.Stdout).Encode(map[string]any{"initial": b.Nft, "recovered": recovered, "failed": failed, "routes": b.Routes, "rules": b.Rules})
+	down, err := dataplane.SelectionBatch(contract.Selection{General: contract.Down, Games: contract.Down}, false)
+	if err != nil {
+		return err
+	}
+	rules := policy.EmptyCustomRules()
+	// The harness makes this documentation address routable in its fixture.
+	rules.Rules = []policy.CustomRule{{ID: "affinity-vpn", Type: policy.RuleIP, Value: "198.51.100.42", Mode: policy.RuleVPN, Enabled: true}}
+	if err = rules.Normalize(netip.Prefix{}); err != nil {
+		return err
+	}
+	configured := p.WithCustom(rules)
+	tunnel := dataplane.StaticSetsBatch(configured.ForMode(policy.ModeTunnel))
+	direct := dataplane.StaticSetsBatch(configured.ForMode(policy.ModeDirect))
+	return json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"initial": b.Nft, "recovered": recovered, "failed": failed, "tunnel": tunnel, "direct": direct, "down": down,
+		"routes": b.Routes, "rules": b.Rules,
+		"anchor": map[string]any{"nft": anchor.Nft, "routes": anchor.Routes, "rules": anchor.Rules},
+	})
 }

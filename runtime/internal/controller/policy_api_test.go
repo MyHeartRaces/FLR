@@ -86,12 +86,12 @@ func liveRouting(t *testing.T, c *Controller) (*[]*policy.Policy, *classifierRec
 	c.broker = dnsbroker.New(base, dnsbroker.StaticRoute{Channel: contract.AWG}, mappings)
 	applied := []*policy.Policy{}
 	fail := false
-	c.applyStaticSets = func(p *policy.Policy) error {
+	c.applyRoutingPolicy = func(p *policy.Policy) error {
 		if fail {
 			return os.ErrPermission
 		}
 		applied = append(applied, p)
-		return nil
+		return c.broker.ApplyPolicy(p, "")
 	}
 	return &applied, mappings, &fail
 }

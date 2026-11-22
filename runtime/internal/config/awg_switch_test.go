@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestSwitchAWGRestoresOnlyOwnedStateAtEveryFailure(t *testing.T) {
@@ -45,6 +46,41 @@ func TestSwitchAWGRestoresOnlyOwnedStateAtEveryFailure(t *testing.T) {
 		if fail == 1 && restored {
 			t.Fatal("failed snapshot mutated native state")
 		}
+	}
+}
+
+func TestObservedAWGRouteFailureIsNotOverwrittenByRollback(t *testing.T) {
+	fields, err := ParseAWG([]byte(publicAWG()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routeFailure := errors.New("synthetic route failure")
+	reloads := 0
+	ops := nativeAWGOpsWith(func(context.Context, string, ...string) ([]byte, error) {
+		return nil, nil
+	}, func(context.Context) error {
+		reloads++
+		if reloads == 1 {
+			return routeFailure
+		}
+		return nil
+	}, func() bool { return true })
+	ops.Snapshot = func(context.Context) (awgOwnedState, error) { return nil, nil }
+	ops.Down = func(context.Context) error { return nil }
+	ops.Apply = func(context.Context, map[string]string, string) error { return nil }
+	ops.Restore = func(context.Context, awgOwnedState) error { return nil }
+	var stages []string
+	var outcomes []error
+	err = switchAWGWith(context.Background(), fields, "eth1", ops, func(stage string, started time.Time, err error) {
+		stages = append(stages, stage)
+		outcomes = append(outcomes, err)
+		if started.IsZero() || time.Since(started) < 0 {
+			t.Fatal("stage is missing elapsed time origin")
+		}
+	})
+	if err == nil || reloads != 2 || !reflect.DeepEqual(stages, []string{"ready", "routes"}) ||
+		outcomes[0] != nil || !errors.Is(outcomes[1], routeFailure) {
+		t.Fatalf("candidate observations must exclude owned rollback: %v %v (switch: %v, reloads: %d)", stages, outcomes, err, reloads)
 	}
 }
 

@@ -468,7 +468,7 @@ func (c *Controller) guardedConnectionActivation(ctx context.Context, settings S
 	if c.stateDir != StateDir {
 		return fmt.Errorf("activation requires fixed router state")
 	}
-	p := c.policy
+	p := c.basePolicy
 	if p == nil {
 		var err error
 		p, err = loadInstalledPolicy()

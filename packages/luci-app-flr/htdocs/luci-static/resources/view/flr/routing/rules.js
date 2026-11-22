@@ -20,7 +20,11 @@ return view.extend({
   var typeNames={domain:_('domain'),ip:_('address'),cidr:_('subnet'),range:_('range')};
   var listBox=E('div',{class:'flr-rules'}),info=E('p',{class:'flr-muted'});
   async function refresh(){state.list=await flr.routing('routing-rules',{query:state.query,offset:state.offset,limit:state.limit});draw();}
-  async function after(result){if(result && result.apply)flr.notify(flr.applyText(result.apply));await refresh();}
+  async function after(result){
+   if(state.policy.mode==='direct')flr.notify(_('Rules saved. Direct mode bypasses them.'));
+   else if(result && result.apply)flr.notify(flr.applyText(result.apply));
+   await refresh();
+  }
   async function failed(error){if(/routing rules changed/i.test(error && error.message || ''))await refresh();}
   function act(label,make,aria){return flr.action(label,function(){var request=make();request.routing.revision=state.list.revision;return request;},after,failed,aria);}
   function select(options,value,name){return field('select',{'data-field':name},options.map(function(o){return E('option',{value:o[0],selected:o[0]===value?true:null},[o[1]]);}));}
@@ -47,7 +51,7 @@ return view.extend({
    if(!rule.enabled)badges.push(E('span',{class:'flr-badge'},_('rule disabled')));
    var notes=[];
    if(rule.local)notes.push(E('p',{class:'flr-notice'},_('Local destinations cover this rule; there they always stay local.')));
-   if(rule.mode==='direct' && state.policy.mode==='full')notes.push(E('p',{class:'flr-muted'},_('Ignored in the current routing mode "Everything via VPN".')));
+   if(rule.mode==='direct' && (state.policy.mode==='full' || state.policy.mode==='tunnel'))notes.push(E('p',{class:'flr-muted'},_('Direct rules are inactive in this mode.')));
    function update(changes){var r={type:rule.type,value:rule.value,mode:rule.mode,comment:rule.comment || '',enabled:rule.enabled};Object.keys(changes).forEach(function(k){r[k]=changes[k];});return {operation:'routing-rule-update',routing:{id:rule.id,rule:r}};}
    return E('article',{class:'flr-card flr-rule','data-rule':rule.id},[
     E('div',{class:'flr-connection-head'},[E('h4',{class:'flr-value'},[String(rule.value)])].concat(badges)),
@@ -71,8 +75,9 @@ return view.extend({
   draw();
   return E('div',{class:'flr-page'},head.concat([
    E('section',{class:'flr-card'},[
-    E('p',{},_('A custom rule sends a domain (with its subdomains), an IPv4 address, subnet or range either through the VPN or directly through the ISP. Custom rules take precedence over the lists of the routing policy; only local destinations always stay local. The most specific rule wins; for the same destination the VPN wins.')),
-    E('p',{class:'flr-muted'},_('"Direct" rules apply in the routing modes "Split" and "Everything via VPN except essential direct services" and are ignored in "Everything via VPN"; "VPN" rules always apply. A change applies to new connections at once, without restarting the VPN; existing connections keep their route. IPv6 is not supported. The rules are stored on the router only.'))]),
+    E('p',{},_('A custom rule matches a domain and its subdomains, an IPv4 address, subnet or range. The most specific active rule wins. When two active rules match the same destination equally, the VPN rule wins. Local destinations stay on the LAN.')),
+    E('p',{class:'flr-muted'},_('Full proxy applies both VPN and direct rules. Tunnel applies VPN rules. Changes to active rules apply to new connections. Rules are stored on the router.')),
+    state.policy.mode==='direct'?E('p',{class:'flr-notice'},_('Direct mode bypasses custom rules. You can edit saved rules for the other modes.')):'']),
    addCard,
    E('section',{class:'flr-card'},[E('h3',{},_('Rules')),E('div',{class:'flr-actions'},[search,E('button',{class:'cbi-button',click:function(){state.query=search.value;state.offset=0;return refresh().catch(flr.error);}},_('Search'))]),info,listBox,E('div',{class:'flr-actions'},[prev,next])])]));
  },handleSave:null,handleSaveApply:null,handleReset:null

@@ -548,23 +548,48 @@ installing an overlay by hand applies it without a restart).
 
 ### Routing mode
 
-`settings` reports `routing_mode`; a patch `{"routing_mode":"full"}` changes
-it. Values:
+In FLR 0.8, select a mode on **Routing → Overview** or through the `settings`
+API. A patch such as `{"routing_mode":"tunnel"}` enables Tunnel. The Proxy
+page selects the connection used for tunneled traffic.
 
-| Mode | Direct lists of the installed policy that apply |
-| --- | --- |
-| `split` (default) | all (`direct-essential`, broad direct domains and CIDRs) |
-| `full_domestic` | only `direct-essential` |
-| `full` | none: everything except local destinations goes through the VPN |
+| Routing mode | Default path | Rules for new flows |
+| --- | --- | --- |
+| **Full proxy** (`split`, default) | VPN | The installed policy and custom rules apply. Direct whitelist matches use the ISP. |
+| **Tunnel** (`tunnel`) | ISP | VPN-required, service and game lists and custom VPN rules send selected traffic through the tunnel. |
+| **Direct** (`direct`) | ISP | FLR skips routing, device and DNS filter rules. OpenWrt handles DNS and forwarding. |
 
-Local, VPN-required, service and game lists, device profiles and the direct
-SOCKS listeners are unaffected. The change is applied by the next controller
-round without a restart: the static broad-direct set is rewritten in one nft
-transaction, the DNS broker classifies new answers with the new view, and the
-address bindings of lists the mode switched off are dropped. Classification
-applies to new flows only, so established connections keep their channel.
-`split` is stored as an absent key; any other mode is stored, and a rollback
-to the 0.6 controller needs it removed first (RECOVERY-0.6).
+Full proxy and Tunnel retain device profiles and the VPN kill switch. Tunnel
+uses the direct resolver for unmatched names and the VPN resolver for
+protected names. Domain rules depend on clients using FLR DNS and receiving
+fresh IPv4 answers. Use IP or CIDR rules to cover clients that resolve
+independently or reuse cached addresses. FLR omits standalone alias and
+address-hint answers for protected names in Tunnel to require an IPv4 answer
+that it can bind to the VPN.
+
+The controller publishes the firewall policy and DNS interception in one
+nftables transaction. Crossing the Direct boundary also hands the DNS port
+between FLR and OpenWrt's dnsmasq, which can briefly interrupt DNS. On an
+activated router, Direct uses the saved native dnsmasq settings. An incomplete
+handoff stays pending for retry. Established traffic keeps its previous
+connection path while it remains available. OpenWrt's current WAN, LAN and
+IPv6 configuration determines which native paths Direct can use.
+
+Older saved `full`, `full_domestic` and `proxy` values keep their existing
+semantics until the operator selects a current mode.
+
+`split` is stored as an absent key. Select `split`, `full_domestic` or `full`
+while 0.8 is running before rolling back to 0.7. For 0.6, remove the key by
+selecting `split` as described in [the recovery guide](RECOVERY-0.6.ru.md).
+
+### Stable egress
+
+The optional `continuity` field in `status` contains `active` and `carrier` when
+the stable egress bridge is configured and running. `active` indicates that
+protected IPv4 traffic uses the stable egress in the applied routing mode.
+`carrier` is `awg`, `gecko` (Hysteria2), or `down`. It reports the selected
+carrier socket, while deployment qualification measures end-to-end traffic
+through the anchor. Existing connection and health fields describe the
+underlying transport. [Configuration and acceptance](RELAY-RESILIENCE.md#session-preserving-failover-through-a-stable-egress)
 
 ### Routing policy API
 
@@ -575,7 +600,7 @@ Unknown or duplicate argument keys are refused.
 
 | Operation | Permission | `routing` arguments | Successful `data` |
 | --- | --- | --- | --- |
-| `routing-policy` | read | none | `{mode, source:"overlay"\|"image", overlay_present, overlay_error, backup_present, policy:{policy.json text and number fields}, rulesets:[{name, class, counts:{domain, domain_suffix, domain_keyword, domain_regex, ip_cidr}, total, bytes, meta?, error?, active}], custom_rules:{summary:{total, enabled, vpn, direct}, revision, error}, live:{controller, vpn, applied_mode, last_apply?, last_apply_source?, custom_rules_error?}, limits}` |
+| `routing-policy` | read | none | `{mode, source:"overlay"\|"image", overlay_present, overlay_error, backup_present, policy:{policy.json text and number fields}, rulesets:[{name, class, counts:{domain, domain_suffix, domain_keyword, domain_regex, ip_cidr}, total, bytes, meta?, error?, active}], custom_rules:{summary:{total, enabled, vpn, direct}, revision, error}, live:{controller, vpn, applied_mode, pending?, last_apply?, last_apply_source?, custom_rules_error?}, limits}` |
 | `routing-entries` | read | `ruleset`, `query?`, `offset?`, `limit?` (1-200, default 100) | `{ruleset, source, total, matched, offset, entries:[{kind, value}]}`; `query` is a case-insensitive substring |
 | `routing-rules` | read | `query?`, `offset?`, `limit?` | `{revision, total, matched, offset, rules:[CustomRule + local?], error}`; `local` marks a rule that local destinations shadow |
 | `routing-rule-add` | write | `revision`, `rule:{type?, value, mode, comment?, enabled}` | `{revision, rule, total, apply}` |
@@ -616,10 +641,9 @@ write, kept across sysupgrade):
   `0.0.0.0/8`, loopback, multicast and `240.0.0.0/4` are refused, and so is
   the same destination twice. At most 2048 rules; comments up to 120
   characters.
-- `mode` `vpn` always sends the destination through the VPN; `direct` sends it
-  through the ISP in the `split` and `full_domestic` routing modes and is
-  ignored in `full`. A `vpn` address rule may not overlap the router LAN and
-  needs the LAN to be discovered.
+- Full proxy applies both `vpn` and `direct` rules. Tunnel applies `vpn` rules.
+  Direct leaves all custom rules inactive. A `vpn` address rule may not overlap
+  the router LAN and requires LAN discovery.
 - Custom rules take precedence over every ruleset class except local
   destinations (`local-domains`, `local-ips`), which always stay local. Among
   custom rules the most specific match wins (longest domain suffix, longest
@@ -721,7 +745,8 @@ fields (FLR's DoH inside the VPN and its direct resolver are used),
 `FakeDNS:true`, `DomainStrategy` (FLR always matches the name first, then for
 unlisted names the resolved IPv4 address, i.e. `IPIfNonMatch`), a
 `RouteOrder` other than `block-proxy-direct` (FLR's fixed order), and
-`GlobalProxy:false` (unlisted destinations still go through the VPN). One
+`GlobalProxy:false` (the import keeps the selected preset, and Tunnel uses
+the ISP for unmatched destinations). One
 difference from Xray: an address in `ProxyIp` goes through the VPN even when
 its name is in `DirectSites`.
 

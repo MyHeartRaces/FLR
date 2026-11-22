@@ -8,11 +8,19 @@ import (
 const Interval = 5 * time.Second
 const RoundDeadline = 4 * time.Second
 
+type ProbeObservation struct {
+	Outcome    string `json:"outcome"`
+	DurationMS int64  `json:"duration_ms"`
+}
+
 type TargetResult struct {
 	TCP           bool  `json:"tcp"`
 	UDP           bool  `json:"udp"`
 	TCPDurationMS int64 `json:"tcp_duration_ms"`
 	UDPDurationMS int64 `json:"udp_duration_ms"`
+	// Diagnostic evidence is kept out of the existing health/export schema.
+	TCPObservation ProbeObservation `json:"-"`
+	UDPObservation ProbeObservation `json:"-"`
 }
 type Result struct {
 	NotMeasured string          `json:"not_measured,omitempty"`

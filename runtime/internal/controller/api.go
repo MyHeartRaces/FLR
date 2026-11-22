@@ -14,6 +14,7 @@ import (
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
 	"github.com/MyHeartRaces/FLR/runtime/internal/control"
 	"github.com/MyHeartRaces/FLR/runtime/internal/dataplane"
+	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
 	"github.com/MyHeartRaces/FLR/runtime/internal/profile"
 	"github.com/MyHeartRaces/FLR/runtime/internal/transport"
 	"github.com/MyHeartRaces/FLR/runtime/internal/validation"
@@ -410,7 +411,7 @@ func (c *Controller) HandleAPI(r control.APIRequest) (any, error) {
 		if e = c.checkDeviceChange(r.Client, r.Value); e != nil {
 			return nil, e
 		}
-		if c.live && c.settings.Enabled {
+		if c.live && c.settings.Enabled && c.appliedMode != policy.ModeDirect {
 			return c.handleDevice(r.Client, r.Value)
 		}
 		s := c.settings
@@ -474,9 +475,7 @@ func (c *Controller) HandleAPI(r control.APIRequest) (any, error) {
 			}
 			s.WarmReserve = storedWarmReserve(warm)
 		}
-		// A routing mode change re-renders the static direct set and drops DNS
-		// bindings of direct lists the mode turns off; established flows keep
-		// their marks (only new flows are classified), so no session moves.
+		// Publish the validated mode at the next controller reconciliation.
 		if patch.RoutingMode != nil {
 			mode, err := storedRoutingMode(*patch.RoutingMode)
 			if err != nil {
@@ -602,7 +601,7 @@ func (c *Controller) HandleAPI(r control.APIRequest) (any, error) {
 			if c.stateDir != StateDir {
 				return nil, fmt.Errorf("activation requires fixed router state path")
 			}
-			p := c.policy
+			p := c.basePolicy
 			if p == nil {
 				p, e = loadInstalledPolicy()
 				if e != nil {

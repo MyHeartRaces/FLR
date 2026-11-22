@@ -434,7 +434,10 @@ func resolveCustomIPs(vpn, direct []netip.Prefix) (vpnOut, directOut []netip.Pre
 // view shares the ruleset matchers of p; p itself is not changed. A nil or
 // empty rule list still yields (empty) custom matchers.
 func (p *Policy) WithCustom(r *CustomRules) *Policy {
-	v := &Policy{sources: make(map[string]*match, len(p.sources)+2)}
+	if p.bypass {
+		return p
+	}
+	v := &Policy{sources: make(map[string]*match, len(p.sources)+2), defaultClass: p.defaultClass}
 	for name, m := range p.sources {
 		v.sources[name] = m
 	}
@@ -463,6 +466,8 @@ func (p *Policy) WithCustom(r *CustomRules) *Policy {
 		}
 	}
 	vpn.prefixes, direct.prefixes = resolveCustomIPs(vpnIPs, directIPs)
+	// Keep VPN prefixes before direct exceptions carve out narrower ranges.
+	v.customVPNOnly = &match{suffix: vpn.suffix, prefixes: vpnIPs}
 	v.sources[CustomVPNSource], v.sources[CustomDirectSource] = vpn, direct
 	return v
 }

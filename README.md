@@ -24,6 +24,9 @@ latency in online games.
   and direct traffic keep working.
 - One LuCI "Proxy" menu: auto, protocol-only or a specific connection, with
   per-protocol ordering of servers.
+- LuCI "Routing" offers Full proxy with ISP whitelist rules, Tunnel with
+  VPN-only destination rules, and Direct with native ISP forwarding and DNS.
+  The VPN kill switch protects tunneled destinations in Full proxy and Tunnel.
 - Compat-locked engine updates: a release that breaks a working connection is
   blocked and the last compatible version stays ([docs/ENGINE-UPDATES.md](docs/ENGINE-UPDATES.md)).
 - Reproducible builds on pinned OpenWrt 25.12 containers, feeds and kernel ABI.
@@ -66,12 +69,13 @@ imported on the device and never belong in Git.
 - [Architecture](docs/architecture.ru.md) and [router 0.6](docs/ROUTER-0.6.ru.md)
 - [Connection management and reserve](docs/PROXY-MANAGEMENT.ru.md)
 - [Router controller API](docs/ROUTER-API.md)
-- [Router/server architecture for 0.7](docs/MAX-PACKAGE.md)
+- [Router/server architecture](docs/MAX-PACKAGE.md)
+- [Relay resilience and performance](docs/RELAY-RESILIENCE.md)
 - [Engine policy](docs/ENGINE-POLICY.ru.md) and [engine updates](docs/ENGINE-UPDATES.md)
 - [Random-SNI sing-box client](client/sing-box-random-sni/README.md)
 - [Third-party components](THIRD_PARTY.md)
 
 ## Status
 
-Version 0.7 is in development. The project grew out of the author's earlier
+Version 0.8 is in development. The project grew out of the author's earlier
 VPN projects and shares no code or infrastructure with them.

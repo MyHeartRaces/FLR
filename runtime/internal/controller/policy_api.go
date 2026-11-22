@@ -248,7 +248,6 @@ func (c *Controller) applyRouting() (routingApply, error) {
 	}
 	rules, customErr := c.readCustomRules()
 	result := routingApply{Source: c.sourceName(dir), Mode: mode, OverlayError: errText(overlayErr), CustomError: errText(customErr)}
-	c.routing.lastApply, c.routing.lastSource = time.Now().UTC(), result.Source
 	c.routing.customErr = result.CustomError
 	if !c.live {
 		result.Pending = "controller not running; the next start uses this configuration"
@@ -259,7 +258,7 @@ func (c *Controller) applyRouting() (routingApply, error) {
 	if c.vpnStarted {
 		// Re-render through the routing mode reconcile path even though the
 		// mode itself is unchanged.
-		c.appliedMode = ""
+		c.routingDirty = true
 	}
 	c.mu.Unlock()
 	if !c.vpnStarted {
@@ -268,10 +267,12 @@ func (c *Controller) applyRouting() (routingApply, error) {
 	}
 	c.reconcileRoutingMode()
 	c.mu.RLock()
-	result.Applied = c.appliedMode == mode
+	result.Applied = c.appliedMode == mode && !c.routingDirty
 	c.mu.RUnlock()
 	if !result.Applied {
 		result.Pending = "not applied yet; the controller retries every round"
+	} else {
+		c.routing.lastApply, c.routing.lastSource = time.Now().UTC(), result.Source
 	}
 	return result, nil
 }
@@ -358,9 +359,19 @@ func (c *Controller) routingOverview() (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("installed routing policy unreadable: %v", err)
 	}
+	c.mu.RLock()
+	activeMode := mode
+	if c.vpnStarted && c.appliedMode != "" {
+		activeMode = c.appliedMode
+	}
+	live := map[string]any{"controller": c.live, "vpn": c.vpnStarted, "applied_mode": c.appliedMode}
+	if c.vpnStarted && (c.routingDirty || c.appliedMode != mode) {
+		live["pending"] = true
+	}
+	c.mu.RUnlock()
 	rulesets := []map[string]any{}
 	for _, rs := range info.Rulesets {
-		rulesets = append(rulesets, map[string]any{"name": rs.Name, "class": rs.Class, "counts": rs.Counts, "total": rs.Total, "bytes": rs.Bytes, "meta": rs.Meta, "error": rs.Error, "active": policy.ActiveInMode(rs.Name, mode)})
+		rulesets = append(rulesets, map[string]any{"name": rs.Name, "class": rs.Class, "counts": rs.Counts, "total": rs.Total, "bytes": rs.Bytes, "meta": rs.Meta, "error": rs.Error, "active": policy.ActiveInMode(rs.Name, activeMode)})
 	}
 	rules, customErr := c.readCustomRules()
 	summary := map[string]int{"total": len(rules.Rules), "enabled": 0, "vpn": 0, "direct": 0}
@@ -370,9 +381,6 @@ func (c *Controller) routingOverview() (any, error) {
 			summary[rule.Mode]++
 		}
 	}
-	c.mu.RLock()
-	live := map[string]any{"controller": c.live, "vpn": c.vpnStarted, "applied_mode": c.appliedMode}
-	c.mu.RUnlock()
 	if !c.routing.lastApply.IsZero() {
 		live["last_apply"] = c.routing.lastApply
 		live["last_apply_source"] = c.routing.lastSource

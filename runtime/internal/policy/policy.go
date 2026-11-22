@@ -28,7 +28,23 @@ type match struct {
 	regex    []*regexp.Regexp
 	prefixes []netip.Prefix
 }
-type Policy struct{ sources map[string]*match }
+type Policy struct {
+	sources       map[string]*match
+	defaultClass  Class
+	bypass        bool
+	customVPNOnly *match
+}
+
+// Bypass reports whether LAN traffic uses native OpenWrt networking.
+func (p *Policy) Bypass() bool { return p.bypass }
+
+// DefaultClass is the egress for a destination without an explicit match.
+func (p *Policy) DefaultClass() Class {
+	if p.defaultClass == Direct {
+		return Direct
+	}
+	return General
+}
 
 var sources = []string{"local-domains", "local-ips", "vpn-required", "direct-essential", "game-platforms", "vpn-services", "roscom-direct-domains", "roscom-direct-ips"}
 
@@ -168,7 +184,7 @@ func (p *Policy) DomainDecision(name string) (Class, string) {
 			return r.class, r.source
 		}
 	}
-	return General, ""
+	return p.DefaultClass(), ""
 }
 func (p *Policy) ClassifyIP(ip netip.Addr) Class {
 	if p.sources["local-ips"].ip(ip) {
@@ -177,13 +193,22 @@ func (p *Policy) ClassifyIP(ip netip.Addr) Class {
 	if class, ok := p.customIP(ip); ok {
 		return class
 	}
-	if p.sources["vpn-required"].ip(ip) || p.sources["vpn-services"].ip(ip) {
+	if p.sources["vpn-required"].ip(ip) {
+		return General
+	}
+	if p.sources["direct-essential"].ip(ip) {
+		return Direct
+	}
+	if p.sources["game-platforms"].ip(ip) {
+		return Games
+	}
+	if p.sources["vpn-services"].ip(ip) {
 		return General
 	}
 	if p.sources["roscom-direct-ips"].ip(ip) {
 		return Direct
 	}
-	return General
+	return p.DefaultClass()
 }
 func (p *Policy) CIDRs(source string) []netip.Prefix {
 	m := p.sources[source]
@@ -234,27 +259,31 @@ func InstalledDir() string {
 	return ImageDir
 }
 
-// Routing modes (docs/MAX-PACKAGE.md, section 6). The installed policy is the
-// "split" view; the other modes switch direct lists off without touching the
-// local and VPN lists:
-//   - full_domestic keeps only the essential direct services (direct-essential);
-//   - full sends everything except local destinations through the VPN.
+// Routing presets choose the fallback egress and which direct lists are used.
+// The installed policy keeps its original split-mode format.
 const (
 	ModeSplit        = "split"
+	ModeProxy        = "proxy"
+	ModeTunnel       = "tunnel"
+	ModeDirect       = "direct"
 	ModeFullDomestic = "full_domestic"
 	ModeFull         = "full"
 )
 
 func ValidMode(m string) bool {
-	return m == ModeSplit || m == ModeFullDomestic || m == ModeFull
+	switch m {
+	case ModeSplit, ModeTunnel, ModeDirect, ModeProxy, ModeFullDomestic, ModeFull:
+		return true
+	}
+	return false
 }
 
-// modeOff lists the sources a routing mode switches off (nil: none). Custom
-// "direct" rules follow direct-essential: they apply in split and
-// full_domestic and are ignored in full; custom "vpn" rules always apply.
+// modeOff lists the sources excluded by each rule-based preset.
 func modeOff(mode string) []string {
 	switch mode {
-	case ModeFull:
+	case ModeProxy:
+		return []string{"direct-essential", "roscom-direct-domains", "roscom-direct-ips"}
+	case ModeFull, ModeTunnel:
 		return []string{"direct-essential", "roscom-direct-domains", "roscom-direct-ips", CustomDirectSource}
 	case ModeFullDomestic:
 		return []string{"roscom-direct-domains", "roscom-direct-ips"}
@@ -266,16 +295,30 @@ func modeOff(mode string) []string {
 // matchers of p; sources the mode switches off match nothing. An unknown or
 // empty mode is the split view (p itself).
 func (p *Policy) ForMode(mode string) *Policy {
+	if mode == ModeDirect {
+		empty := &match{}
+		v := &Policy{sources: make(map[string]*match, len(sources)), defaultClass: Direct, bypass: true}
+		for _, name := range sources {
+			v.sources[name] = empty
+		}
+		return v
+	}
 	off := modeOff(mode)
 	if off == nil {
 		return p
 	}
 	v := &Policy{sources: make(map[string]*match, len(p.sources))}
+	if mode == ModeTunnel {
+		v.defaultClass = Direct
+	}
 	for name, m := range p.sources {
 		v.sources[name] = m
 	}
 	for _, name := range off {
 		v.sources[name] = &match{exact: map[string]bool{}, suffix: map[string]bool{}}
+	}
+	if mode == ModeTunnel && p.customVPNOnly != nil {
+		v.sources[CustomVPNSource] = p.customVPNOnly
 	}
 	return v
 }

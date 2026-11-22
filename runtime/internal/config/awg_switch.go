@@ -77,17 +77,25 @@ func ValidateAWGOwnedState(state AWGOwnedState) error {
 }
 
 type awgSwitchOps struct {
-	Snapshot func(context.Context) (awgOwnedState, error)
-	Down     func(context.Context) error
-	Apply    func(context.Context, map[string]string, string) error
-	Reload   func(context.Context) error
-	Restore  func(context.Context, awgOwnedState) error
+	Snapshot       func(context.Context) (awgOwnedState, error)
+	Down           func(context.Context) error
+	Apply          func(context.Context, map[string]string, string) error
+	Reload         func(context.Context) error
+	Restore        func(context.Context, awgOwnedState) error
+	observedReload func(context.Context, AWGSwitchObserver) error
 }
+
+// AWGSwitchObserver reports the candidate's existing readiness and route
+// operations. It is never called for the rollback of the previous owner.
+type AWGSwitchObserver func(stage string, started time.Time, err error)
 
 func SwitchAWG(ctx context.Context, fields map[string]string, wan string) error {
 	return switchAWGWith(ctx, fields, wan, nativeAWGOps)
 }
-func switchAWGWith(ctx context.Context, fields map[string]string, wan string, ops awgSwitchOps) error {
+func SwitchAWGObserved(ctx context.Context, fields map[string]string, wan string, observe AWGSwitchObserver) error {
+	return switchAWGWith(ctx, fields, wan, nativeAWGOps, observe)
+}
+func switchAWGWith(ctx context.Context, fields map[string]string, wan string, ops awgSwitchOps, observe ...AWGSwitchObserver) error {
 	if _, err := AWGText(fields); err != nil || !regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`).MatchString(wan) {
 		return fmt.Errorf("invalid native AWG or WAN input")
 	}
@@ -101,7 +109,11 @@ func switchAWGWith(ctx context.Context, fields map[string]string, wan string, op
 		err = ops.Apply(bounded, fields, wan)
 	}
 	if err == nil {
-		err = ops.Reload(bounded)
+		if len(observe) != 0 && ops.observedReload != nil {
+			err = ops.observedReload(bounded, observe[0])
+		} else {
+			err = ops.Reload(bounded)
+		}
 	}
 	if err == nil {
 		return nil
@@ -127,7 +139,7 @@ type awgCommandFunc func(context.Context, string, ...string) ([]byte, error)
 var nativeAWGOps = nativeAWGOpsWith(awgCommand, dataplane.EnsureRoutesContext, func() bool { return health.Present(contract.AWG) })
 
 func nativeAWGOpsWith(command awgCommandFunc, routes func(context.Context) error, present func() bool) awgSwitchOps {
-	return awgSwitchOps{
+	ops := awgSwitchOps{
 		Snapshot: func(ctx context.Context) (awgOwnedState, error) {
 			state := awgOwnedState{}
 			for _, section := range []string{"flr_awg", "flr_peer"} {
@@ -186,7 +198,7 @@ func nativeAWGOpsWith(command awgCommandFunc, routes func(context.Context) error
 				return err
 			})
 		},
-		Reload: func(ctx context.Context) error {
+		observedReload: func(ctx context.Context, observe AWGSwitchObserver) error {
 			if _, err := command(ctx, "uci", "commit", "network"); err != nil {
 				return err
 			}
@@ -204,19 +216,34 @@ func nativeAWGOpsWith(command awgCommandFunc, routes func(context.Context) error
 			if err != nil {
 				return err
 			}
+			ready := time.Now()
 			ticker := time.NewTicker(100 * time.Millisecond)
 			defer ticker.Stop()
 			for !present() {
 				select {
 				case <-ctx.Done():
+					if observe != nil {
+						observe("ready", ready, ctx.Err())
+					}
 					return ctx.Err()
 				case <-ticker.C:
 				}
 			}
-			return routes(ctx)
+			if observe != nil {
+				observe("ready", ready, nil)
+			}
+			start := time.Now()
+			err = routes(ctx)
+			if observe != nil {
+				observe("routes", start, err)
+			}
+			return err
 		},
 		Restore: func(ctx context.Context, state awgOwnedState) error { return restoreOwnedAWGWith(ctx, state, command) },
 	}
+	reload := ops.observedReload
+	ops.Reload = func(ctx context.Context) error { return reload(ctx, nil) }
+	return ops
 }
 
 func restoreOwnedAWGWith(ctx context.Context, state awgOwnedState, command awgCommandFunc) error {

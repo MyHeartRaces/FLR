@@ -4,6 +4,8 @@ package diagnostic
 import (
 	"encoding/json"
 	"fmt"
+	"hash/maphash"
+	"math"
 	"regexp"
 	"sync"
 	"time"
@@ -106,6 +108,7 @@ type RoundRecord struct {
 }
 type Decision struct {
 	Sequence        uint64             `json:"sequence"`
+	AttemptSequence uint64             `json:"attempt_sequence,omitempty"`
 	At              time.Time          `json:"at"`
 	ElapsedMS       int64              `json:"elapsed_ms"`
 	Epoch           uint64             `json:"epoch"`
@@ -121,16 +124,20 @@ type Decision struct {
 	ReserveRetained bool               `json:"reserve_retained"`
 }
 type Export struct {
-	Boot                    string        `json:"boot"`
-	Version                 string        `json:"version"`
-	Source                  string        `json:"source"`
-	LastSequence            uint64        `json:"last_sequence"`
-	DroppedRounds           uint64        `json:"dropped_rounds"`
-	DroppedDecisions        uint64        `json:"dropped_decisions"`
-	DroppedRoundSequence    uint64        `json:"dropped_round_sequence"`
-	DroppedDecisionSequence uint64        `json:"dropped_decision_sequence"`
-	Rounds                  []RoundRecord `json:"rounds"`
-	Decisions               []Decision    `json:"decisions"`
+	Boot                    string          `json:"boot"`
+	Instance                string          `json:"instance,omitempty"`
+	Version                 string          `json:"version"`
+	Source                  string          `json:"source"`
+	LastSequence            uint64          `json:"last_sequence"`
+	DroppedRounds           uint64          `json:"dropped_rounds"`
+	DroppedDecisions        uint64          `json:"dropped_decisions"`
+	DroppedRoundSequence    uint64          `json:"dropped_round_sequence"`
+	DroppedDecisionSequence uint64          `json:"dropped_decision_sequence"`
+	DroppedAttempts         uint64          `json:"dropped_attempts,omitempty"`
+	DroppedAttemptSequence  uint64          `json:"dropped_attempt_sequence,omitempty"`
+	Rounds                  []RoundRecord   `json:"rounds"`
+	Decisions               []Decision      `json:"decisions"`
+	Attempts                []AttemptRecord `json:"attempts,omitempty"`
 }
 type Page struct {
 	Export
@@ -140,25 +147,31 @@ type Page struct {
 type Summary struct {
 	SnapshotPending  bool      `json:"snapshot_pending"`
 	Boot             string    `json:"boot"`
+	Instance         string    `json:"instance,omitempty"`
 	Version          string    `json:"version"`
 	Source           string    `json:"source"`
 	Rounds           int       `json:"rounds"`
 	Decisions        int       `json:"decisions"`
 	DroppedRounds    uint64    `json:"dropped_rounds"`
 	DroppedDecisions uint64    `json:"dropped_decisions"`
+	Attempts         int       `json:"attempts,omitempty"`
+	DroppedAttempts  uint64    `json:"dropped_attempts,omitempty"`
 	LastDecision     *Decision `json:"last_decision,omitempty"`
 	WAN              WANResult `json:"wan"`
 }
 type History struct {
 	mu                        sync.Mutex
 	start                     time.Time
+	seed                      maphash.Seed
 	data                      Export
 	roundSizes, decisionSizes []int
+	attemptSizes              []int
 	bytes                     int
 }
 
 func New(boot, version, source string) *History {
-	return &History{start: time.Now(), data: Export{Boot: token(boot, bootPattern), Version: enum(version, "0.6-runtime", "0.7-runtime"), Source: token(source, hashPattern), Rounds: []RoundRecord{}, Decisions: []Decision{}}}
+	seed := maphash.MakeSeed()
+	return &History{start: time.Now(), seed: seed, data: Export{Boot: token(boot, bootPattern), Instance: fmt.Sprintf("%016x", maphash.String(seed, "controller")), Version: enum(version, "0.6-runtime", "0.7-runtime", contract.RuntimeVersion), Source: token(source, hashPattern), Rounds: []RoundRecord{}, Decisions: []Decision{}}}
 }
 func channel(c contract.Channel) contract.Channel {
 	if c == contract.AWG || c == contract.Gecko || c == contract.VLESS {
@@ -227,12 +240,31 @@ func (h *History) dropDecision() {
 }
 func (h *History) bound() {
 	for h.bytes > MaxBytes-8192 {
-		if len(h.data.Rounds) > 0 && (len(h.data.Decisions) == 0 || h.data.Rounds[0].Sequence < h.data.Decisions[0].Sequence) {
+		switch h.nextRecord(0, 0, 0, math.MaxUint64) {
+		case "round":
 			h.dropRound()
-		} else {
+		case "decision":
 			h.dropDecision()
+		case "attempt":
+			h.dropAttempt()
+		default:
+			return
 		}
 	}
+}
+
+func (h *History) nextRecord(i, j, k int, until uint64) string {
+	kind := ""
+	if i < len(h.data.Rounds) && h.data.Rounds[i].Sequence <= until {
+		kind, until = "round", h.data.Rounds[i].Sequence
+	}
+	if j < len(h.data.Decisions) && h.data.Decisions[j].Sequence <= until {
+		kind, until = "decision", h.data.Decisions[j].Sequence
+	}
+	if k < len(h.data.Attempts) && h.data.Attempts[k].Sequence <= until {
+		kind = "attempt"
+	}
+	return kind
 }
 func (h *History) Export() Export {
 	h.mu.Lock()
@@ -240,12 +272,13 @@ func (h *History) Export() Export {
 	v := h.data
 	v.Rounds = append([]RoundRecord{}, v.Rounds...)
 	v.Decisions = append([]Decision{}, v.Decisions...)
+	v.Attempts = append([]AttemptRecord(nil), v.Attempts...)
 	return v
 }
 func (h *History) Summary(wan WANResult) Summary {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := Summary{Boot: h.data.Boot, Version: h.data.Version, Source: h.data.Source, Rounds: len(h.data.Rounds), Decisions: len(h.data.Decisions), DroppedRounds: h.data.DroppedRounds, DroppedDecisions: h.data.DroppedDecisions, WAN: wan}
+	s := Summary{Boot: h.data.Boot, Instance: h.data.Instance, Version: h.data.Version, Source: h.data.Source, Rounds: len(h.data.Rounds), Decisions: len(h.data.Decisions), Attempts: len(h.data.Attempts), DroppedAttempts: h.data.DroppedAttempts, DroppedRounds: h.data.DroppedRounds, DroppedDecisions: h.data.DroppedDecisions, WAN: wan}
 	if len(h.data.Decisions) > 0 {
 		last := h.data.Decisions[len(h.data.Decisions)-1]
 		s.LastDecision = &last
@@ -273,32 +306,41 @@ func (h *History) PageUntil(cursor, until uint64) (Page, error) {
 	meta.LastSequence = until
 	meta.Rounds = []RoundRecord{}
 	meta.Decisions = []Decision{}
+	meta.Attempts = nil
 	p := Page{Export: meta, Next: cursor}
-	i, j, count := 0, 0, 0
+	i, j, k, count := 0, 0, 0, 0
 	for i < len(h.data.Rounds) && h.data.Rounds[i].Sequence <= cursor {
 		i++
 	}
 	for j < len(h.data.Decisions) && h.data.Decisions[j].Sequence <= cursor {
 		j++
 	}
+	for k < len(h.data.Attempts) && h.data.Attempts[k].Sequence <= cursor {
+		k++
+	}
 	for {
-		hasRound := i < len(h.data.Rounds) && h.data.Rounds[i].Sequence <= until
-		hasDecision := j < len(h.data.Decisions) && h.data.Decisions[j].Sequence <= until
-		if !hasRound && !hasDecision {
+		kind := h.nextRecord(i, j, k, until)
+		if kind == "" {
 			break
 		}
 		if count == 16 {
 			p.More = true
 			break
 		}
-		round := hasRound && (!hasDecision || h.data.Rounds[i].Sequence < h.data.Decisions[j].Sequence)
 		next := p
-		if round {
-			next.Rounds = append(append([]RoundRecord{}, p.Rounds...), h.data.Rounds[i])
+		switch kind {
+		case "round":
+			next.Rounds = append(next.Rounds, h.data.Rounds[i])
 			next.Next = h.data.Rounds[i].Sequence
-		} else {
-			next.Decisions = append(append([]Decision{}, p.Decisions...), h.data.Decisions[j])
+			i++
+		case "decision":
+			next.Decisions = append(next.Decisions, h.data.Decisions[j])
 			next.Next = h.data.Decisions[j].Sequence
+			j++
+		case "attempt":
+			next.Attempts = append(next.Attempts, h.data.Attempts[k])
+			next.Next = h.data.Attempts[k].Sequence
+			k++
 		}
 		raw, _ := json.Marshal(next)
 		if len(raw) > MaxPageBytes-128 {
@@ -307,11 +349,6 @@ func (h *History) PageUntil(cursor, until uint64) (Page, error) {
 		}
 		p = next
 		count++
-		if round {
-			i++
-		} else {
-			j++
-		}
 	}
 	return p, nil
 }

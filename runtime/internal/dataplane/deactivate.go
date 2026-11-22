@@ -54,9 +54,7 @@ func deactivateWith(backupDir string, ops deactivationOps) error {
 		// A fresh snapshot bounds deletion to still-present owned objects. A
 		// retry after a successful partial delete skips the absent object.
 		for _, rule := range snap.Rules {
-			reserved := (rule.Priority >= 1770 && rule.Priority <= 1772) ||
-				(rule.Priority >= 1780 && rule.Priority <= 1781)
-			if reserved {
+			if _, reserved := reservedRule(rule.Priority); reserved {
 				if e = ops.run("ip", "-4", "rule", "del", "pref", strconv.Itoa(rule.Priority)); e != nil {
 					return e
 				}
@@ -64,11 +62,11 @@ func deactivateWith(backupDir string, ops deactivationOps) error {
 		}
 		tables := map[int]bool{}
 		for _, route := range snap.Routes {
-			if route.Table >= 770 && route.Table <= 773 {
+			if route.Table >= firstRouteTable && route.Table <= lastRouteTable {
 				tables[route.Table] = true
 			}
 		}
-		for table := 770; table <= 773; table++ {
+		for table := firstRouteTable; table <= lastRouteTable; table++ {
 			if tables[table] {
 				if e = ops.run("ip", "-4", "route", "flush", "table", strconv.Itoa(table)); e != nil {
 					return e

@@ -2,14 +2,21 @@ package dataplane
 
 import (
 	"fmt"
-	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
-	"github.com/MyHeartRaces/FLR/runtime/internal/native"
-	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
+	"github.com/MyHeartRaces/FLR/runtime/internal/native"
+	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
+	"github.com/MyHeartRaces/FLR/runtime/internal/privatefile"
+)
+
+const (
+	bootGuardPath   = "/etc/flr-runtime/boot-guard.nft"
+	bootGuardHeader = "# tracegate-flr-v1\n"
 )
 
 func BuildBootGuard(p *policy.Policy, o Options) (string, error) {
@@ -26,8 +33,61 @@ func BuildBootGuard(p *policy.Policy, o Options) (string, error) {
 	if o.TestClient != "" {
 		scope += " ip saddr " + o.TestClient
 	}
-	return fmt.Sprintf("# tracegate-flr-v1\ndestroy table inet flr_boot\ntable inet flr_boot {\n set local4 { type ipv4_addr; flags interval; auto-merge; elements = { %s }; }\n chain forward { type filter hook forward priority -6; policy accept;\n  %s ip daddr != @local4 ct mark & 0x0f000000 != 0x03000000 counter drop\n  iifname \"%s\" oifname \"%s\" meta nfproto ipv6 counter drop\n }\n}\n", strings.Join(ips, ", "), scope, o.LAN, o.WAN), nil
+	var elements string
+	if len(ips) != 0 {
+		elements = " elements = { " + strings.Join(ips, ", ") + " };"
+	}
+	return fmt.Sprintf(bootGuardHeader+`destroy table inet flr_boot
+table inet flr_boot {
+ set local4 { type ipv4_addr; flags interval; auto-merge;%s }
+ chain forward { type filter hook forward priority -6; policy accept;
+  %s ip daddr != @local4 ct mark & 0x0f000000 != 0x03000000 counter drop
+  iifname "%s" oifname "%s" meta nfproto ipv6 %s != %s counter drop
+ }
 }
+`, elements, scope, o.LAN, o.WAN, directAffinityField, directAffinityMark), nil
+}
+
+// PrepareRoutingBootGuard refreshes the owned firewall include and returns
+// its rules for the same transaction as the routing table. Always return the
+// rules for an owned include so a retry also refreshes a stale kernel table.
+func PrepareRoutingBootGuard(p *policy.Policy, o Options) (string, error) {
+	if err := CheckBootOwnership(); err != nil {
+		return "", err
+	}
+	return prepareRoutingBootGuard(bootGuardPath, p, o)
+}
+
+func prepareRoutingBootGuard(path string, p *policy.Policy, o Options) (string, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil
+	}
+	current, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(string(current), bootGuardHeader) {
+		return "", nil
+	}
+	guard, err := BuildBootGuard(p, o)
+	if err != nil {
+		return "", err
+	}
+	if guard != string(current) {
+		if err := privatefile.Write(path, []byte(guard)); err != nil {
+			return "", err
+		}
+	}
+	return guard, nil
+}
+
 func ValidateBackup(dir string) error {
 	if !filepath.IsAbs(dir) {
 		return fmt.Errorf("backup must be absolute")
@@ -59,6 +119,10 @@ func UpdateProfiles(profiles map[string]contract.Class) error {
 	if e := ValidateOptions(Options{LAN: "br-lan", WAN: "eth1", Selection: contract.Selection{General: contract.Down, Games: contract.Down}, Profiles: profiles}); e != nil {
 		return e
 	}
+	return Nft(profilesBatch(profiles))
+}
+
+func profilesBatch(profiles map[string]contract.Class) string {
 	var s strings.Builder
 	for _, c := range []contract.Class{contract.Direct, contract.General, contract.Games} {
 		name := "profile_" + string(c) + "4"
@@ -73,7 +137,7 @@ func UpdateProfiles(profiles map[string]contract.Class) error {
 			fmt.Fprintf(&s, "add element inet flr %s { %s }\n", name, strings.Join(ips, ", "))
 		}
 	}
-	return Nft(s.String())
+	return s.String()
 }
 func SessionGuard(client, mac string) error {
 	ip, e := netip.ParseAddr(client)
@@ -103,15 +167,29 @@ func ClearSession() error {
 }
 
 func CheckBootOwnership() error {
-	if _, e := output("nft", "list", "table", "inet", "flr_boot"); e != nil {
-		if native.Interrupted(e) {
-			return e
-		}
-		return nil
+	return checkBootOwnership(bootGuardPath, output)
+}
+
+func checkBootOwnership(path string, out func(string, ...string) ([]byte, error)) error {
+	tables, err := out("nft", "list", "tables")
+	if err != nil {
+		return fmt.Errorf("cannot check boot guard ownership: %w", err)
 	}
-	b, e := os.ReadFile("/etc/flr-runtime/boot-guard.nft")
-	if e != nil || !strings.HasPrefix(string(b), "# tracegate-flr-v1\n") {
-		return fmt.Errorf("foreign flr_boot table")
+	for _, line := range strings.Split(string(tables), "\n") {
+		if strings.TrimSpace(line) == "table inet flr_boot" {
+			info, err := os.Lstat(path)
+			if err != nil || !info.Mode().IsRegular() {
+				return fmt.Errorf("flr_boot table has no regular owned include")
+			}
+			b, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("cannot read boot guard include: %w", err)
+			}
+			if !strings.HasPrefix(string(b), bootGuardHeader) {
+				return fmt.Errorf("foreign flr_boot table")
+			}
+			return nil
+		}
 	}
 	return nil
 }

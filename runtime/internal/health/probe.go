@@ -149,8 +149,10 @@ func probeTargets(ctx context.Context, probeUDP bool, tcp, udp targetProbe) Resu
 		wg.Add(1)
 		go func(i int, t probeTarget) {
 			defer wg.Done()
+			start := time.Now()
 			ok, ms := tcp(ctx, t)
 			result.Targets[i].TCP = ok
+			result.Targets[i].TCPObservation = observeProbe(ctx, start, ok, ms)
 			if ok {
 				result.Targets[i].TCPDurationMS = ms
 			}
@@ -159,8 +161,10 @@ func probeTargets(ctx context.Context, probeUDP bool, tcp, udp targetProbe) Resu
 			wg.Add(1)
 			go func(i int, t probeTarget) {
 				defer wg.Done()
+				start := time.Now()
 				ok, ms := udp(ctx, t)
 				result.Targets[i].UDP = ok
+				result.Targets[i].UDPObservation = observeProbe(ctx, start, ok, ms)
 				if ok {
 					result.Targets[i].UDPDurationMS = ms
 				}
@@ -174,4 +178,18 @@ func probeTargets(ctx context.Context, probeUDP bool, tcp, udp targetProbe) Resu
 	}
 	result.RTT = time.Since(start)
 	return result
+}
+
+func observeProbe(ctx context.Context, start time.Time, ok bool, successMS int64) ProbeObservation {
+	if ok {
+		return ProbeObservation{Outcome: "ok", DurationMS: successMS}
+	}
+	outcome := "failed"
+	switch ctx.Err() {
+	case context.Canceled:
+		outcome = "cancelled"
+	case context.DeadlineExceeded:
+		outcome = "timeout"
+	}
+	return ProbeObservation{Outcome: outcome, DurationMS: elapsedMS(start)}
 }

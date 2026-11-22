@@ -7,13 +7,13 @@ Wants=network-online.target
 Type=oneshot
 ExecStart=/usr/local/sbin/flr-engine-update run
 TimeoutStartSec=45min
+KillMode=control-group
 Nice=10
 # Hardening. Root is needed for systemctl restart; everything else is read-only.
 ProtectSystem=strict
 # The canary child inherits this sandbox. It needs: UDP/TCP sockets (AF_INET/AF_INET6),
 # AF_NETLINK (Go interface lookups), read access to the TLS cert/key files and to
-# server.yaml outside /home. If the Hysteria YAML uses `acme:` with a writable dir,
-# add that directory to ReadWritePaths.
+# server.yaml outside /home. Paired qualification uses static TLS paths.
 ReadWritePaths=/var/lib/flr-engine /usr/local/bin
 ProtectHome=true
 PrivateTmp=true

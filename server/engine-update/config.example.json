@@ -33,7 +33,8 @@
       "elf_machine": "x86-64",
       "restart_wait_s": 4,
       "verify_consecutive_polls": 3,
-      "ready_retries": 3
+      "ready_retries": 3,
+      "qualification": null
     }
   }
 }

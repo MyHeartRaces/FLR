@@ -21,7 +21,7 @@ func TestBuildRetainsFlowsAndScopesLAN(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if !strings.Contains(b.Nft, `iifname "br-lan" ip saddr 192.168.8.100 jump classify`) {
+	if !strings.Contains(b.Nft, `iifname "br-lan" ip saddr 192.168.8.100 jump routing_mode`) {
 		t.Fatal("test policy escaped its LAN client")
 	}
 	if !strings.Contains(b.Nft, `ct mark & 0xff800000 != 0 jump restore`) {

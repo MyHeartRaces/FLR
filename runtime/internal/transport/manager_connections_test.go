@@ -353,3 +353,65 @@ func testNativeCleanupFailure(t *testing.T, failures int, want string) {
 		t.Fatalf("AWG failed to recover without disturbing the reserve: active=%v reserve alive=%v", s.ActiveConnection, backend.alive)
 	}
 }
+
+type qualifyingAWG struct {
+	fakeAWG
+	mainProbes  int
+	mainReadyAt int
+	firstProbe  time.Time
+	readyDelay  time.Duration
+}
+
+func (a *qualifyingAWG) Probe(ctx context.Context) health.Result {
+	if a.active != "main" {
+		return a.fakeAWG.Probe(ctx)
+	}
+	if a.mainProbes == 0 {
+		a.firstProbe = time.Now()
+	}
+	a.mainProbes++
+	if a.mainProbes < a.mainReadyAt || time.Since(a.firstProbe) < a.readyDelay {
+		return health.Result{Measured: true}
+	}
+	return awgTiming(100)
+}
+
+func TestNewNativeAWGHasOneBoundedQualificationRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		mainReadyAt int
+		probeBudget time.Duration
+		readyDelay  time.Duration
+		want        string
+		probes      int
+	}{
+		{name: "first probe passes", mainReadyAt: 1, want: "main", probes: 1},
+		{name: "second probe passes", mainReadyAt: 2, readyDelay: 200 * time.Millisecond, want: "main", probes: 2},
+		{name: "both probes fail", mainReadyAt: 3, want: "spare", probes: 2},
+		{name: "insufficient retry budget", mainReadyAt: 2, probeBudget: 100 * time.Millisecond, want: "spare", probes: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			main := managedConnection(t, "awg", "main", 10)
+			spare := managedConnection(t, "awg", "spare", 11)
+			r := &connection.Registry{Version: 2, Connections: []connection.Connection{main, spare}}
+			awg := &qualifyingAWG{
+				fakeAWG: fakeAWG{good: map[string]bool{"spare": true}}, mainReadyAt: tc.mainReadyAt, readyDelay: tc.readyDelay,
+			}
+			m := New(&fakeBackend{}, nil, nil)
+			m.SetAWGBackend(awg)
+			if tc.probeBudget != 0 {
+				m.ProbeTimeout = tc.probeBudget
+			}
+			s := m.StepConnections(context.Background(), time.Unix(100, 0), r, connection.Selection{Mode: "auto"}, connection.DefaultOrder(r), 1)
+			if s.ActiveConnection == nil || s.ActiveConnection.ID != tc.want {
+				t.Fatalf("wanted active %s; got %v after switches %v", tc.want, s.ActiveConnection, awg.switches)
+			}
+			if awg.mainProbes != tc.probes {
+				t.Fatalf("wanted %d Main probes; got %d", tc.probes, awg.mainProbes)
+			}
+			if s.AWG.Window.Samples != 1 || s.AWG.Failures != 0 {
+				t.Fatalf("qualification attempts should count as one passing health sample, got %+v", s.AWG.Window)
+			}
+		})
+	}
+}

@@ -113,3 +113,91 @@ func TestRoutingModesSwitchDirectListsOff(t *testing.T) {
 		t.Fatal("invalid mode accepted")
 	}
 }
+
+func TestRoutingPresetDefaultsAndExplicitOverrides(t *testing.T) {
+	base, err := Load("testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rules := EmptyCustomRules()
+	rules.Rules = []CustomRule{
+		{Type: RuleDomain, Value: "direct.example", Mode: RuleDirect, Enabled: true},
+		{Type: RuleDomain, Value: "tunnel.example", Mode: RuleVPN, Enabled: true},
+		{Type: RuleCIDR, Value: "5.255.255.0/26", Mode: RuleVPN, Enabled: true},
+		{Type: RuleIP, Value: "5.255.255.5", Mode: RuleDirect, Enabled: true},
+	}
+	if err := rules.Normalize(netip.Prefix{}); err != nil {
+		t.Fatal(err)
+	}
+	base = base.WithCustom(rules)
+	for _, tc := range []struct {
+		mode                            string
+		fallback, directRule, essential Class
+	}{
+		{"proxy", General, Direct, General},
+		{"tunnel", Direct, Direct, Direct},
+		{"split", General, Direct, Direct},
+		{"full", General, General, General},
+		{"full_domestic", General, Direct, Direct},
+	} {
+		if !ValidMode(tc.mode) {
+			t.Errorf("%s must be a supported mode", tc.mode)
+		}
+		p := base.ForMode(tc.mode)
+		for name, want := range map[string]Class{
+			"unlisted.example": tc.fallback, "direct.example": tc.directRule,
+			"api.ozon.ru": tc.essential, "printer.lan": Local,
+			"tunnel.example": General, "mirror.yandex.ru": General,
+			"updates.apple.com": General, "api.steampowered.com": Games,
+		} {
+			if got := p.ClassifyDomain(name); got != want {
+				t.Errorf("%s: %s = %s, want %s", tc.mode, name, got, want)
+			}
+		}
+		for address, want := range map[string]Class{"5.255.255.6": General, "17.20.0.1": General, "8.8.4.4": tc.fallback} {
+			if got := p.ClassifyIP(netip.MustParseAddr(address)); got != want {
+				t.Errorf("%s: %s = %s, want %s", tc.mode, address, got, want)
+			}
+		}
+		if tc.mode == "tunnel" || tc.mode == "proxy" {
+			if ActiveInMode("direct-essential", tc.mode) || ActiveInMode("roscom-direct-ips", tc.mode) {
+				t.Errorf("%s should disable inherited direct lists", tc.mode)
+			}
+		}
+	}
+	if got := base.ForMode("tunnel").ClassifyIP(netip.MustParseAddr("5.255.255.5")); got != General {
+		t.Errorf("inactive Direct exception cut a hole in a Tunnel VPN subnet: %s", got)
+	}
+	if ActiveInMode(CustomDirectSource, "tunnel") {
+		t.Error("Direct exceptions are inactive in Tunnel")
+	}
+	p := base.ForMode("direct")
+	if p.ClassifyDomain("tunnel.example") != Direct || p.ClassifyIP(netip.MustParseAddr("5.255.255.6")) != Direct {
+		t.Fatal("Direct still applies VPN exceptions")
+	}
+	for _, list := range append(RulesetNames(), CustomVPNSource, CustomDirectSource) {
+		if ActiveInMode(list, "direct") || len(p.CIDRs(list)) != 0 {
+			t.Errorf("Direct still applies %s", list)
+		}
+	}
+}
+
+func TestTunnelPreservesProtectedCIDRClasses(t *testing.T) {
+	dir := t.TempDir()
+	writePolicy(t, dir, nil)
+	for list, prefix := range map[string]string{"game-platforms": "198.51.100.0/25", "vpn-required": "198.51.100.16/28"} {
+		data := []byte(`{"version":3,"rules":[{"ip_cidr":["` + prefix + `"]}]}`)
+		if err := os.WriteFile(filepath.Join(dir, "rulesets", list+".json"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for addr, want := range map[string]Class{"198.51.100.1": Games, "198.51.100.17": General, "198.51.100.250": Direct} {
+		if got := base.ForMode("tunnel").ClassifyIP(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("tunnel: %s = %s, want %s", addr, got, want)
+		}
+	}
+}

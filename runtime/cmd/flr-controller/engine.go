@@ -40,7 +40,7 @@ const engineWAN = "eth1"
 
 func engineMain(args []string) int {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: flr-controller engine status|check|run|hold|unhold|unblock|rollback|loop")
+		fmt.Fprintln(os.Stderr, "usage: flr-controller engine status|check|run|hold|unhold|unblock|rollback|loop|qualify-relay")
 		return engineUsage
 	}
 	if os.Geteuid() != 0 {
@@ -48,6 +48,9 @@ func engineMain(args []string) int {
 		return engineError
 	}
 	env := engineupdate.DefaultEnv()
+	if args[0] == "qualify-relay" {
+		return qualifyRelayCLI(args[1:], env)
+	}
 	cfg, cerr := engineupdate.LoadConfig(env.ConfigPath())
 	noConfig := errors.Is(cerr, engineupdate.ErrNoConfig)
 	if cerr != nil && !noConfig {

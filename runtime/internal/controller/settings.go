@@ -29,8 +29,8 @@ type Settings struct {
 	DirectBypass bypass.Config `json:"direct_bypass"`
 	HealthPolicy health.Policy `json:"health_policy"`
 	WarmReserve  *WarmReserve  `json:"warm_reserve,omitempty"`
-	// RoutingMode selects which direct lists of the installed policy apply
-	// (policy.ForMode). Stored empty for the default "split", so settings stay
+	// RoutingMode selects the fallback, applicable lists, and native bypass.
+	// Stored empty for the default "split", so settings stay
 	// loadable by a 0.6 controller after a rollback.
 	RoutingMode string `json:"routing_mode,omitempty"`
 	// TunnelQoS is CAKE on the AWG tunnel (internal/qos); absent means off.
@@ -435,7 +435,7 @@ func (s Settings) EffectiveRoutingMode() string {
 // storedRoutingMode is the persisted form: empty for the default.
 func storedRoutingMode(mode string) (string, error) {
 	if !policy.ValidMode(mode) {
-		return "", fmt.Errorf("routing mode must be split, full_domestic or full")
+		return "", fmt.Errorf("routing mode must be split, tunnel, direct or a supported legacy value")
 	}
 	if mode == policy.ModeSplit {
 		return "", nil

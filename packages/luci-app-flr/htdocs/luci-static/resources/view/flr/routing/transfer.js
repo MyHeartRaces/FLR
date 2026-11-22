@@ -68,16 +68,16 @@ return view.extend({
    name_too_long:_('domain longer than 253 characters'),
    name_not_punycode:_('internationalized name not in punycode (xn--…)'),
    name_invalid:_('invalid characters in domain'),
-   block_not_applied:_('FLR does not block destinations; they follow the other lists (unlisted: VPN)'),
+   block_not_applied:_('FLR routes these destinations using the other lists and the selected mode'),
    dns_hosts:_('FLR resolves every name through its own DNS broker; static host entries are not imported'),
    dns_servers:_('FLR uses its own resolvers: DoH inside the VPN, and the direct resolver of its settings for direct names'),
    fake_dns:_('FLR does not use fake DNS answers'),
    domain_strategy:_('FLR always matches the name first and, for unlisted names, the resolved IPv4 address (the same as IPIfNonMatch)'),
    route_order:_('FLR always gives the VPN lists precedence over the direct lists (block-proxy-direct)'),
-   global_proxy:_('FLR still sends unlisted destinations through the VPN'),
+   global_proxy:_('FLR keeps the selected routing mode. Choose Tunnel to send unlisted destinations through the ISP while retaining VPN rules'),
    note_bare_keywords:_('%s bare entries were imported as substring (keyword) matches, as Xray matches them; write domain:example.com for a domain and its subdomains'),
    note_proxyip_wins:_('an address in ProxyIp goes through the VPN even when its name is in DirectSites (FLR matches address sets before name-derived direct sets)'),
-   note_split_only:_('DirectSites and DirectIp apply in routing mode split only; full_domestic and full ignore them'),
+   note_split_only:_('DirectSites and DirectIp take effect in Full proxy (split)'),
    note_duplicate_refs:_('%s repeated category references were expanded once'),
    note_attribute_filter:_('attribute filters follow Xray: geosite:name@attr keeps domains with the attribute key attr; a leading ! is part of the key')};
   function coded(item,fallback){var t=reasonTexts[item && item.code],args=Array.isArray(item && item.args)?item.args.map(String):[];return t?t.format.apply(t,args):String(fallback || '');}
@@ -117,7 +117,7 @@ return view.extend({
   }
   var presetButtons=roscomPresets.map(function(p){return E('button',{class:'cbi-button',disabled:L.hasViewPermission()?null:true,click:function(){roscomURL.value=p[1];roscomFile.value='';}},p[0]==='Whitelist'?_('Whitelist preset'):_('Default preset'));});
   var roscomSection=E('section',{class:'flr-card'},[E('h3',{},[_('RoscomVPN routing profile')]),
-   E('p',{},[_('Converts a RoscomVPN routing profile (Happ or INCY JSON, or its routing link) into the private policy overlay: DirectSites and DirectIp become the broad direct lists, ProxySites and ProxyIp always go through the VPN, private destinations stay local, everything else keeps going through the VPN. Blocking, DNS and fake-DNS settings of the profile are not applied. Custom rules stay as they are.')]),
+   E('p',{},[_('Converts a RoscomVPN routing profile (Happ or INCY JSON, or its routing link) into the private policy overlay. DirectSites and DirectIp become direct lists for Full proxy. ProxySites and ProxyIp become VPN rules for Full proxy and Tunnel. Private destinations stay local in every mode. The import keeps your custom rules. FLR uses its own DNS and routing settings.')]),
    E('p',{},[_('The router downloads the profile and the geosite and geoip files it names: through the VPN while the VPN runs, otherwise through the ISP. Preview shows the result without changing anything; Import replaces the current routing policy and keeps the previous one as the backup.')]),
    E('div',{class:'flr-actions'},presetButtons),
    flr.field(_('Profile URL (HTTPS)'),roscomURL),
@@ -136,7 +136,7 @@ return view.extend({
     E('p',{},_('Reloads the installed policy and the custom rules and applies them to new connections, for example after installing an overlay by hand. Existing connections keep their route.')),
     flr.action(_('Reload and apply'),{operation:'routing-apply'},after)]),
    E('section',{class:'flr-card'},[E('h3',{},_('Image default and backup')),
-    E('p',{},_('"Reset to image default" moves the private overlay to the backup: everything except local destinations then goes through the VPN; custom rules stay. "Restore backup" brings the saved overlay back and keeps the current one as the backup.')),
+    E('p',{},_('"Reset to image default" backs up the private overlay and loads the image policy. Both actions keep the selected routing mode and saved Custom rules. "Restore backup" brings the saved overlay back and keeps the current one as the backup.')),
     backupState,
     E('div',{class:'flr-actions'},[
      flr.action(_('Reset to image default'),function(){if(!window.confirm(_('Remove the private overlay? It is kept as the backup.')))throw new Error(_('Reset cancelled.'));return {operation:'routing-reset',routing:{accepted:true}};},after),

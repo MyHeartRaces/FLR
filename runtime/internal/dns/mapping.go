@@ -21,6 +21,8 @@ type View struct {
 	Class      contract.Class
 	Source     string
 	Channel    contract.Channel
+	// Alias is an upstream name queried for a rewritten client name.
+	Alias string
 }
 type Binding struct {
 	Class   contract.Class
@@ -37,6 +39,9 @@ type Bindings struct{ names map[string]namedBinding }
 func NewBindings() *Bindings { return &Bindings{names: map[string]namedBinding{}} }
 func (s *Bindings) Replace(now time.Time, v View, name string, rs []AddressTTL) {
 	key := v.ID + "/" + name
+	if v.Alias != "" {
+		key += "/" + v.Alias
+	}
 	b := namedBinding{Name: name, View: v, Records: map[netip.Addr]time.Time{}}
 	// Clients may still use addresses issued by an earlier answer until its TTL expires.
 	for ip, expiry := range s.names[key].Records {
@@ -70,18 +75,22 @@ type Classifier func(name string, v View, ip netip.Addr) (View, bool)
 // Reclassify rebinds every outstanding address under f (a routing mode
 // change), keeping each address's expiry.
 func (s *Bindings) Reclassify(now time.Time, f Classifier) {
-	old := s.names
-	s.names = map[string]namedBinding{}
-	for _, b := range old {
+	s.names = s.reclassified(now, f).names
+}
+
+func (s *Bindings) reclassified(now time.Time, f Classifier) *Bindings {
+	next := NewBindings()
+	for _, b := range s.names {
 		for ip, expiry := range b.Records {
 			if !expiry.After(now) {
 				continue
 			}
 			if v, ok := f(b.Name, b.View, ip); ok {
-				s.Replace(now, v, b.Name, []AddressTTL{{IP: ip, TTL: expiry.Sub(now)}})
+				next.Replace(now, v, b.Name, []AddressTTL{{IP: ip, TTL: expiry.Sub(now)}})
 			}
 		}
 	}
+	return next
 }
 
 func priority(c contract.Class) int {
@@ -118,6 +127,10 @@ func (s *Bindings) Snapshot(now time.Time) map[netip.Addr]Binding {
 	return out
 }
 func AnswerRecords(m *mdns.Msg) ([]AddressTTL, error) {
+	return answerRecords(m, 0)
+}
+
+func answerRecords(m *mdns.Msg, minTTL uint32) ([]AddressTTL, error) {
 	if len(m.Question) != 1 {
 		return nil, fmt.Errorf("DNS response must have one question")
 	}
@@ -169,6 +182,7 @@ func AnswerRecords(m *mdns.Msg) ([]AddressTTL, error) {
 		if r.Header().Ttl < ttl {
 			ttl = r.Header().Ttl
 		}
+		ttl = max(ttl, minTTL)
 		if ttl == 0 {
 			continue
 		}
@@ -193,6 +207,7 @@ type MappingWriter interface {
 }
 type KernelMappings struct {
 	mu       sync.Mutex
+	applyMu  sync.Mutex
 	bindings *Bindings
 	pending  []chan error
 	flushing bool
@@ -250,42 +265,49 @@ func (k *KernelMappings) Replace(v View, name string, rs []AddressTTL) error {
 	return <-committed
 }
 
-// SetClassifier installs f for every later binding, rebinds the outstanding
-// ones under it and rewrites the kernel sets, like an answer would.
-func (k *KernelMappings) SetClassifier(f Classifier) error {
+// ApplyPolicy installs the static policy and reclassified bindings in one nft
+// transaction. Failed publication keeps both the previous bindings and the
+// classifier used for subsequent DNS answers.
+func (k *KernelMappings) ApplyPolicy(f Classifier, static string) error {
+	k.applyMu.Lock()
+	defer k.applyMu.Unlock()
 	k.mu.Lock()
-	k.classify = f
-	k.bindings.Reclassify(time.Now(), f)
-	committed := make(chan error, 1)
-	k.pending = append(k.pending, committed)
-	if !k.flushing {
-		k.flushing = true
-		go k.flush()
+	defer k.mu.Unlock()
+	now := time.Now()
+	next := k.bindings.reclassified(now, f)
+	if err := k.apply(static + next.batch(now)); err != nil {
+		return err
 	}
-	k.mu.Unlock()
-	return <-committed
+	k.bindings, k.classify = next, f
+	return nil
+}
+
+func (s *Bindings) batch(now time.Time) string {
+	var req strings.Builder
+	for _, set := range []string{"required4", "essential4", "games4", "services4", "direct_domains4"} {
+		fmt.Fprintf(&req, "flush set inet flr %s\n", set)
+	}
+	for ip, b := range s.Snapshot(now) {
+		ttl := b.Expires.Sub(now).Milliseconds()
+		if ttl > 0 {
+			fmt.Fprintf(&req, "add element inet flr %s { %s timeout %dms }\n", MappingSet(b), ip, ttl)
+		}
+	}
+	return req.String()
 }
 
 func (k *KernelMappings) flush() {
 	for {
 		// Coalesce simultaneous DNS answers into one atomic kernel transaction.
 		time.Sleep(5 * time.Millisecond)
+		k.applyMu.Lock()
 		k.mu.Lock()
 		waiters := k.pending
 		k.pending = nil
-		now := time.Now()
-		var req strings.Builder
-		for _, set := range []string{"required4", "essential4", "games4", "services4", "direct_domains4"} {
-			fmt.Fprintf(&req, "flush set inet flr %s\n", set)
-		}
-		for ip, b := range k.bindings.Snapshot(now) {
-			ttl := b.Expires.Sub(now).Milliseconds()
-			if ttl > 0 {
-				fmt.Fprintf(&req, "add element inet flr %s { %s timeout %dms }\n", MappingSet(b), ip, ttl)
-			}
-		}
+		batch := k.bindings.batch(time.Now())
 		k.mu.Unlock()
-		err := k.apply(req.String())
+		err := k.apply(batch)
+		k.applyMu.Unlock()
 		for _, waiter := range waiters {
 			waiter <- err
 		}

@@ -81,18 +81,34 @@ return baseclass.extend({
   var output=null,cursor=0,upper=0,bytes=0;
   for(var pages=0;pages<1000;pages++) {
    var page=await fetchPage(output?cursor+':'+upper:'0');
-   if(!page || !Array.isArray(page.rounds) || !Array.isArray(page.decisions) || !Number.isSafeInteger(page.next) || !Number.isSafeInteger(page.last_sequence) || page.next<cursor || page.next>page.last_sequence)throw new Error(_('Invalid diagnostics page.'));
-   if(!output){upper=page.last_sequence;output={boot:page.boot,source:page.source,version:page.version,last_sequence:upper,dropped_rounds:page.dropped_rounds,dropped_decisions:page.dropped_decisions,dropped_round_sequence:page.dropped_round_sequence,dropped_decision_sequence:page.dropped_decision_sequence,rounds:[],decisions:[]};}
-   else if(page.boot!==output.boot || page.source!==output.source || page.version!==output.version || page.last_sequence!==upper)throw new Error(_('The history changed during the download; repeat the export.'));
-   ['round','decision'].forEach(function(kind){
+   if(!page || !Array.isArray(page.rounds) || !Array.isArray(page.decisions) || (page.attempts!==undefined && !Array.isArray(page.attempts)) || !Number.isSafeInteger(page.next) || !Number.isSafeInteger(page.last_sequence) || page.next<cursor || page.next>page.last_sequence)throw new Error(_('Invalid diagnostics page.'));
+   var attempts=page.attempts || [];
+   var attemptBoundary=page.dropped_attempt_sequence===undefined?0:page.dropped_attempt_sequence;
+   if(!output){
+    upper=page.last_sequence;
+    output={boot:page.boot,source:page.source,version:page.version,last_sequence:upper,dropped_rounds:page.dropped_rounds,dropped_decisions:page.dropped_decisions,dropped_round_sequence:page.dropped_round_sequence,dropped_decision_sequence:page.dropped_decision_sequence,rounds:[],decisions:[]};
+    if(page.instance!==undefined){
+     output.instance=page.instance;
+     output.dropped_attempt_sequence=attemptBoundary;
+     output.dropped_attempts=page.dropped_attempts===undefined?0:page.dropped_attempts;
+     output.attempts=[];
+    }
+   }
+   else if(page.boot!==output.boot || page.instance!==output.instance || page.source!==output.source || page.version!==output.version || page.last_sequence!==upper)throw new Error(_('The history changed during the download; repeat the export.'));
+   ['round','decision','attempt'].forEach(function(kind){
     var key='dropped_'+kind+'_sequence',value=page[key],base=output[key];
+    if(kind==='attempt'){
+     value=attemptBoundary;
+     if(base===undefined)base=0;
+    }
     if(!Number.isSafeInteger(value) || value<0 || !Number.isSafeInteger(base) || base<0)throw new Error(_('Invalid diagnostics history boundary.'));
     if(value>Math.max(base,cursor))throw new Error(_('The history lost records not yet downloaded; repeat the export.'));
    });
-   page.rounds.concat(page.decisions).forEach(function(record){if(!Number.isSafeInteger(record.sequence) || record.sequence<=cursor || record.sequence>page.next)throw new Error(_('Invalid diagnostics cursor.'));});
-   bytes+=new TextEncoder().encode(JSON.stringify([page.rounds,page.decisions])).length;
+   page.rounds.concat(page.decisions,attempts).forEach(function(record){if(!Number.isSafeInteger(record.sequence) || record.sequence<=cursor || record.sequence>page.next)throw new Error(_('Invalid diagnostics cursor.'));});
+   bytes+=new TextEncoder().encode(JSON.stringify([page.rounds,page.decisions,attempts])).length;
    if(bytes>4*1024*1024)throw new Error(_('The diagnostics history exceeds the 4 MiB limit.'));
    output.rounds=output.rounds.concat(page.rounds);output.decisions=output.decisions.concat(page.decisions);
+   if(output.attempts || attempts.length)output.attempts=(output.attempts || []).concat(attempts);
    if(!page.more)return output;
    if(page.next===cursor)throw new Error(_('The diagnostics download stalled; repeat the export.'));
    cursor=page.next;

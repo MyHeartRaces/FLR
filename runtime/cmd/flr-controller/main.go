@@ -25,7 +25,7 @@ import (
 	"time"
 )
 
-const version = "0.7-runtime"
+const version = contract.RuntimeVersion
 
 func fail(e error) {
 	if e != nil {

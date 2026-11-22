@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
@@ -16,10 +17,62 @@ import (
 
 type classifierRecorder struct{ set []dnsbroker.Classifier }
 
+func TestRoutingModePassesThroughNativeDNSOnlyForDirect(t *testing.T) {
+	base, err := policy.Load("../policy/testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tunnel, direct := base.ForMode(policy.ModeTunnel), base.ForMode(policy.ModeDirect)
+	for _, tc := range []struct {
+		name       string
+		from, to   *policy.Policy
+		failure    string
+		operations []string
+	}{
+		{"rule based", base, tunnel, "", []string{"publish rules"}},
+		{"enter Direct", tunnel, direct, "", []string{"publish direct", "stop broker", "native DNS"}},
+		{"leave Direct", direct, base, "", []string{"local DNS", "start broker", "publish rules"}},
+		{"failed Direct publication", base, direct, "publish direct", []string{"publish direct"}},
+		{"failed native resolver", tunnel, direct, "native DNS", []string{"publish direct", "stop broker", "native DNS", "local DNS", "publish rules", "start broker"}},
+		{"failed return to policy", direct, tunnel, "publish rules", []string{"local DNS", "start broker", "publish rules", "stop broker", "native DNS"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var operations []string
+			record := func(op string) error {
+				operations = append(operations, op)
+				if op == tc.failure {
+					return os.ErrPermission
+				}
+				return nil
+			}
+			ops := routingModeOps{
+				publish: func(p *policy.Policy) error {
+					if p.Bypass() {
+						return record("publish direct")
+					}
+					return record("publish rules")
+				},
+				nativeDNS: func(direct bool) error {
+					if direct {
+						return record("native DNS")
+					}
+					return record("local DNS")
+				},
+				startDNS: func() error { return record("start broker") },
+				stopDNS:  func() { _ = record("stop broker") },
+			}
+			err := ops.apply(tc.from, tc.to)
+			if (err != nil) != (tc.failure != "") || !slices.Equal(operations, tc.operations) {
+				t.Fatalf("apply: %v, operations %v, want %v", err, operations, tc.operations)
+			}
+		})
+	}
+}
+
 func (d *classifierRecorder) Replace(dnsbroker.View, string, []dnsbroker.AddressTTL) error {
 	return nil
 }
-func (d *classifierRecorder) SetClassifier(f dnsbroker.Classifier) error {
+func (d *classifierRecorder) ApplyPolicy(f dnsbroker.Classifier, _ string) error {
 	d.set = append(d.set, f)
 	return nil
 }
@@ -36,12 +89,12 @@ func TestRoutingModeSettingAppliesWithoutRestart(t *testing.T) {
 	c.broker = dnsbroker.New(base, dnsbroker.StaticRoute{Channel: contract.AWG}, mappings)
 	var applied []*policy.Policy
 	fail := false
-	c.applyStaticSets = func(p *policy.Policy) error {
+	c.applyRoutingPolicy = func(p *policy.Policy) error {
 		if fail {
 			return os.ErrPermission
 		}
 		applied = append(applied, p)
-		return nil
+		return c.broker.ApplyPolicy(p, "")
 	}
 	api := func(raw string) (Settings, error) {
 		data, err := c.HandleAPI(control.APIRequest{Operation: "settings", Settings: json.RawMessage(raw)})

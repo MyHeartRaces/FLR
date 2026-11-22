@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
+	"github.com/MyHeartRaces/FLR/runtime/internal/diagnostic"
 	"github.com/MyHeartRaces/FLR/runtime/internal/health"
 	"sync"
 	"time"
@@ -12,6 +13,9 @@ type connectionSample struct {
 	result  health.Result
 	present bool
 	valid   bool
+	started time.Time
+	ready   diagnostic.AttemptStage
+	probe   diagnostic.AttemptProbe
 }
 
 func (m *Manager) connectionProbes(ctx context.Context, now time.Time) (native, slot connectionSample) {
@@ -29,7 +33,9 @@ func (m *Manager) connectionProbes(ctx context.Context, now time.Time) (native, 
 	var workers sync.WaitGroup
 	nativePresent := false
 	if monitorNative {
+		native.started = time.Now()
 		native.present = s.awg != nil && s.awg.Present()
+		native.ready = readinessStage(native.started, native.present)
 		native.valid = true
 		nativePresent = native.present
 		if native.present {
@@ -38,7 +44,9 @@ func (m *Manager) connectionProbes(ctx context.Context, now time.Time) (native, 
 				defer workers.Done()
 				bounded, cancel := context.WithTimeout(ctx, m.ProbeTimeout)
 				defer cancel()
+				start := time.Now()
 				native.result = s.awg.Probe(bounded)
+				native.probe = probeObservation(start, bounded, native.result, true)
 				if ctx.Err() == context.Canceled {
 					native = unmeasuredSample(ctx)
 				}
@@ -49,7 +57,9 @@ func (m *Manager) connectionProbes(ctx context.Context, now time.Time) (native, 
 		// Liveness is checked every round, so a dead standby is retired at once.
 		// Only the measurement of a standby beside a settled native default
 		// follows the warm interval; it carries no flows meanwhile.
+		slot.started = time.Now()
 		slot.present = m.backend.Alive()
+		slot.ready = readinessStage(slot.started, slot.present)
 		slot.valid = true
 		if slot.present && m.standbySettled(now, nativePresent) {
 			slot = connectionSample{}
@@ -57,7 +67,9 @@ func (m *Manager) connectionProbes(ctx context.Context, now time.Time) (native, 
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
+				start := time.Now()
 				slot.result = m.runProbe(ctx, *s.slot.Profile)
+				slot.probe = probeObservation(start, ctx, slot.result, s.slot.Profile.Capabilities.UDP)
 				if ctx.Err() == context.Canceled {
 					slot = unmeasuredSample(ctx)
 				}
@@ -115,6 +127,7 @@ func (m *Manager) cleanupChannel(channel contract.Channel, reason string) error 
 func (m *Manager) deselectConnection() {
 	m.connectionState().active = nil
 	m.state.ActiveConnection = nil
+	m.state.AttemptSequence = 0
 	m.state.Active = nil
 	m.state.Selection = contract.Selection{General: contract.Down, Games: contract.Down}
 	m.refreshReserve()

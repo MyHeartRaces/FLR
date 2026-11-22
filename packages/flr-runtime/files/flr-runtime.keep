@@ -30,6 +30,8 @@
 # Engine updater: owner config and the compatibility lock (docs/ENGINE-UPDATES.md).
 /etc/flr-runtime/engine-update.json
 /etc/flr-runtime/engines.lock.json
+# Optional configuration for the operator-managed stable egress bridge.
+/etc/flr-runtime/continuity.json
 # Private routing policy overlay (policy/README.md); the image never ships one.
 /etc/flr-runtime/policy/policy.json
 /etc/flr-runtime/policy/rulesets/local-domains.json

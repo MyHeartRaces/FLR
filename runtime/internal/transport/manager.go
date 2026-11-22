@@ -34,6 +34,7 @@ type Snapshot struct {
 	ReserveConnection *connection.Summary  `json:"reserve_connection,omitempty"`
 	ReserveWarm       bool                 `json:"reserve_warm"`
 	Generation        uint64               `json:"generation"`
+	AttemptSequence   uint64               `json:"-"`
 	Pending           bool                 `json:"pending"`
 	Reason            string               `json:"reason,omitempty"`
 	Selection         contract.Selection   `json:"selection"`
@@ -60,6 +61,7 @@ type Manager struct {
 	quiesce             func() error
 	channelCleanup      func(contract.Channel, string) error
 	recordDecision      func(diagnostic.Decision)
+	recordAttempt       func(diagnostic.Attempt)
 	slotCleanupPending  bool
 	active              *profile.Profile
 	state               Snapshot
@@ -69,6 +71,10 @@ type Manager struct {
 	ProbeTimeout        time.Duration
 	healthPolicy        health.Policy
 	warm                WarmPolicy
+	stableEgress        bool
+	stableEgressProbe   func(context.Context, connection.Summary) (measured, reachable bool)
+	anchorEvidence      anchorEvidence
+	anchorRejected      map[string]bool
 	StepTimeout         time.Duration
 	AdmissionWait       time.Duration // bounds the wait for a cancelled standby admission (warm.go)
 	teardownWait        time.Duration

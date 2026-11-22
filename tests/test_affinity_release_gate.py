@@ -19,11 +19,21 @@ class AffinityReleaseGateTests(unittest.TestCase):
         valid = dict(qualified=True, source='a'*40, kernel='Linux CI', production_nft_sha256='b'*64,
                      tcp_udp_old_proxy_survived=True, new_flows_awg=True, ready_proxy_reused=True,
                      proxy_process_link_routes_unchanged=True, wan_leak=False, wan_guard_dropped_packets=2,
+                     direct_default_with_vpn_down=True, explicit_vpn_blocked_with_vpn_down=True,
+                     lan_reachable_with_vpn_down=True, tcp_udp_old_proxy_survived_mode_change=True,
+                     direct_ignores_vpn_and_device_rules=True,
+                     direct_mode_wan_guard_dropped_packets=2,
+                     production_anchor_nft_sha256='c'*64, anchored_tcp_udp_survived_carrier_retirement=True,
+                     anchored_forward_guard_dropped_packets=2, anchored_output_guard_dropped_packets=2,
                      transport_simulation='isolated veth', real_tunnels_tested=False, hardware_tested=False)
         validate(valid, 'a'*40)
-        for key, value in [('qualified',False),('source','c'*40),('wan_leak',True),('wan_guard_dropped_packets',0),('hardware_tested',True),('real_tunnels_tested',True),('tcp_udp_old_proxy_survived',1)]:
+        for key, value in [('qualified',False),('source','c'*40),('wan_leak',True),('wan_guard_dropped_packets',0),('hardware_tested',True),('real_tunnels_tested',True),('tcp_udp_old_proxy_survived',1),('explicit_vpn_blocked_with_vpn_down',False)]:
             with self.subTest(key=key):
                 record={**valid,key:value}
+                with self.assertRaises(ValueError): validate(record, 'a'*40)
+        for key, value in [('anchored_tcp_udp_survived_carrier_retirement',False), ('anchored_forward_guard_dropped_packets',1), ('anchored_output_guard_dropped_packets',True), ('production_anchor_nft_sha256',0)]:
+            with self.subTest(key=key):
+                record = {**valid, key: value}
                 with self.assertRaises(ValueError): validate(record, 'a'*40)
         for missing in valid:
             with self.subTest(missing=missing):

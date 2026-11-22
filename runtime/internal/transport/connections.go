@@ -118,6 +118,7 @@ func (m *Manager) clearConnection(reason ...string) bool {
 		m.connections.active = nil
 	}
 	m.state.ActiveConnection = nil
+	m.state.AttemptSequence = 0
 	if !m.abandonAdmission(m.teardownWait) {
 		// The worker still owns the backend: nothing may stop or restart it
 		// until it returns. The round reports the cleanup as pending (the
@@ -154,7 +155,7 @@ func (m *Manager) freshGeneration(generation uint64) bool {
 	m.state.Reason = "new selection pending"
 	return false
 }
-func (m *Manager) selectConnection(c connection.Connection, state health.State, generation uint64) bool {
+func (m *Manager) selectConnection(c connection.Connection, state health.State, generation uint64, attempt *diagnostic.Attempt) bool {
 	if !m.freshGeneration(generation) {
 		return false
 	}
@@ -163,6 +164,10 @@ func (m *Manager) selectConnection(c connection.Connection, state health.State, 
 	m.connectionState().active = &copy
 	summary := c.Summary()
 	m.state.ActiveConnection = &summary
+	if attempt != nil {
+		attempt.Outcome = "ok"
+		m.state.AttemptSequence = attempt.AttemptSequence
+	}
 	m.state.Generation = generation
 	m.state.Pending = false
 	m.state.Reason = ""
@@ -202,25 +207,69 @@ func (m *Manager) selectConnection(c connection.Connection, state health.State, 
 		} else if c.Family != "awg" && m.connectionState().native != nil {
 			reason = "fallback"
 		}
-		m.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: generation, From: connectionIdentity(previous), To: connectionIdentity(&c), Reason: reason, Outcome: "prepared", Stage: "selection", Channel: channel, ReserveRetained: m.state.ReserveConnection != nil})
+		m.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: generation, AttemptSequence: m.state.AttemptSequence, From: connectionIdentity(previous), To: connectionIdentity(&c), Reason: reason, Outcome: "prepared", Stage: "selection", Channel: channel, ReserveRetained: m.state.ReserveConnection != nil})
 	}
 	return true
 }
-func (m *Manager) nativeProbe(ctx context.Context, now time.Time, c connection.Connection) health.State {
+
+const nativeQualificationRetryDelay = 300 * time.Millisecond
+
+func (m *Manager) nativeProbe(ctx context.Context, now time.Time, c connection.Connection, freshlyApplied bool, attempt *diagnostic.Attempt) health.State {
 	s := m.connectionState()
 	state := s.health[connectionKey(c)]
 	result := health.Result{}
+	start := time.Now()
 	present := s.awg != nil && s.awg.Present()
+	if attempt.Ready.Outcome == "" || !present {
+		attempt.Ready = readinessStage(start, present)
+	}
 	if ctx.Err() != nil {
 		result = unmeasuredSample(ctx).result
 		present = true
 	} else if present {
 		bounded, cancel := context.WithTimeout(ctx, m.ProbeTimeout)
+		before := m.readAWGTraffic(bounded, s.awg, c, attempt.Epoch)
+		start := time.Now()
 		result = s.awg.Probe(bounded)
-		cancel()
-		if ctx.Err() == context.Canceled {
-			result = unmeasuredSample(ctx).result
+		attempt.Probes[0] = probeObservation(start, bounded, result, true)
+		// A newly applied interface can handshake before it can carry the
+		// probe traffic. Allow one retry within the existing probe budget
+		// and feed only the final result to the health evaluator.
+		deadline, _ := bounded.Deadline()
+		if freshlyApplied && result.NotMeasured == "" && (!result.TCP || !result.UDP) &&
+			bounded.Err() == nil && time.Until(deadline) > nativeQualificationRetryDelay {
+			timer := time.NewTimer(nativeQualificationRetryDelay)
+			select {
+			case <-timer.C:
+				if bounded.Err() == nil {
+					start := time.Now()
+					present = s.awg.Present()
+					if present {
+						start := time.Now()
+						result = s.awg.Probe(bounded)
+						attempt.Probes[1] = probeObservation(start, bounded, result, true)
+					} else {
+						attempt.Ready = readinessStage(start, false)
+					}
+				}
+			case <-bounded.Done():
+			}
+			timer.Stop()
 		}
+		if present {
+			m.observeAWGAfterProbe(bounded, s.awg, c, attempt, before)
+		}
+		cancel()
+	}
+	// A superseded attempt may retain evidence, but it cannot update the
+	// evaluator. Cancellation still interrupts the clean recovery streak.
+	if m.requestedGeneration.Load() != attempt.Epoch {
+		state.Last = health.Result{NotMeasured: "cancelled"}
+		return state
+	}
+	if ctx.Err() == context.Canceled {
+		result = unmeasuredSample(ctx).result
+		present = true
 	}
 	state.UpdatePolicy(now, result, present, m.healthPolicy)
 	m.state.LastProbe, m.state.ProbeConnection = result, c.ID
@@ -271,10 +320,17 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 			delete(s.warmRetries, key)
 		}
 	}
+	for key := range m.anchorRejected {
+		if !stored[key] {
+			delete(m.anchorRejected, key)
+		}
+	}
 	changed := m.state.Generation != generation || m.state.Requested != selection
 	if changed {
 		s.cursor = ""
 		s.nativeCleanupRetry = ""
+		m.anchorEvidence = anchorEvidence{}
+		m.anchorRejected = nil
 		// A new explicit choice is allowed to retire the previous resources. Merely
 		// changing priority metadata keeps the same intent generation and affinity.
 		if (s.active != nil || s.slot != nil || s.admission != nil || s.quarantine) && !m.clearConnection() {
@@ -321,8 +377,11 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 	}
 	// Collection runs concurrently and never mutates manager state. Apply only
 	// after the newest intent has been rechecked, then publish a coherent snapshot.
+	previousOwner := connectionIdentity(s.active)
 	m.roamBeforeProbe(ctx, now, available, generation, changed)
+	pendingAnchor := m.probeStableEgress(ctx, s.active)
 	nativeSample, slotSample := m.connectionProbes(ctx, now)
+	anchorSample := collectAnchorSample(ctx, pendingAnchor)
 	if !m.freshGeneration(generation) {
 		return m.state
 	}
@@ -365,26 +424,43 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 	if ctx.Err() == context.Canceled {
 		return m.state
 	}
+	anchorFailed := m.anchorFailed(s.active, anchorSample)
 	if s.active != nil {
 		c := s.active.Clone()
 		key := connectionKey(c)
 		state := s.health[key]
-		if state.Healthy() {
-			if c.Family != "awg" && s.native != nil && nativeSample.valid && nativeSample.result.NotMeasured == "" && m.state.AWG.Healthy() && rank[connectionKey(*s.native)] < rank[key] && !now.Before(m.retries[connectionKey(*s.native)].after) {
+		if candidate, candidateState, sample, ok := m.stableEgressFallback(now, c, nativeSample, slotSample, anchorFailed); ok {
+			m.cool(key, now)
+			m.selectObservedConnection(ctx, available[connectionKey(candidate)], candidateState, generation, previousOwner, "fallback", sample)
+			return m.state
+		}
+		if state.Healthy() && !anchorFailed {
+			nativeRecovered := nativeSample.valid && nativeSample.result.NotMeasured == "" && m.state.AWG.Healthy()
+			if m.stableEgressAuto() {
+				nativeRecovered = nativeRecovered && s.native != nil && !m.anchorRejected[connectionKey(*s.native)] && nativeSample.result.TCP && nativeSample.result.UDP
+			}
+			if c.Family != "awg" && s.native != nil && nativeRecovered && rank[connectionKey(*s.native)] < rank[key] && !now.Before(m.retries[connectionKey(*s.native)].after) {
 				// Atomic map publication in the controller is the only default transition.
 				// Slot ownership, process, TUN, routes and existing conntrack stay intact.
-				m.selectConnection(available[connectionKey(*s.native)], m.state.AWG, generation)
+				m.selectObservedConnection(ctx, available[connectionKey(*s.native)], m.state.AWG, generation, previousOwner, "failback", nativeSample)
 			} else {
-				m.selectConnection(available[key], state, generation)
+				m.selectConnection(available[key], state, generation, nil)
 				if c.Family != "awg" {
 					// Re-advance: retry the AWG candidates ranked above the proxy.
-					m.readvanceAWG(ctx, now, candidates, rank[key], nativeSample, generation)
+					preferred := m.stableFailbackCandidates(candidates[:rank[key]])
+					m.readvanceAWG(ctx, now, preferred, len(preferred), nativeSample, generation)
 				}
 			}
 			return m.state
 		}
 		m.cool(key, now)
 		s.cursor = key
+		if anchorFailed {
+			m.state.Reason = "active carrier could not reach stable egress"
+			if c.Family == "hy2" && !m.retireSlot("channel_failed") {
+				return m.state
+			}
+		}
 		m.deselectConnection()
 	}
 	// A standby start that has already finished is adopted here if it
@@ -399,8 +475,8 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 	// (docs/ROUTER-API.md, "Warm reserve").
 	if s.slot != nil {
 		state := s.health[connectionKey(*s.slot)]
-		if state.Healthy() {
-			m.selectConnection(available[connectionKey(*s.slot)], state, generation)
+		if state.Healthy() && (!m.stableEgressAuto() || m.qualifiedStableEgressCarrier(now, s.slot, state)) {
+			m.selectObservedConnection(ctx, available[connectionKey(*s.slot)], state, generation, previousOwner, "fallback", slotSample)
 			return m.state
 		}
 	}
@@ -429,7 +505,11 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 	}
 	slotChecked, slotFree := false, false
 	awgCleanupFailed := false
+	var attempt *diagnostic.Attempt
+	defer func() { m.finishAttempt(ctx, attempt) }()
 	for _, c := range candidates[start:] {
+		m.finishAttempt(ctx, attempt)
+		attempt = nil
 		if awgCleanupFailed && c.Family == "awg" {
 			// Advance even if this round ran out of time, so the next round
 			// can start with the proxy instead of trying the same AWG mark.
@@ -446,12 +526,17 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 		previous := s.cursor
 		s.cursor = key
 		if c.Family == "awg" {
+			attempt = beginAttempt(&c, previousOwner, generation, "sweep")
 			if s.awg == nil {
+				attempt.Outcome = "unavailable"
 				m.state.Reason = "native AWG unavailable"
 				continue
 			}
 			if s.native == nil || connectionKey(*s.native) != key || !s.awg.Present() {
-				if err := m.cleanupChannel(contract.AWG, "native_replacement"); err != nil {
+				start := time.Now()
+				err := m.cleanupChannel(contract.AWG, "native_replacement")
+				attempt.Retirement = operationStage(start, err)
+				if err != nil {
 					m.state.LastError = "native cleanup failed"
 					if s.nativeCleanupRetry != key {
 						s.nativeCleanupRetry = key
@@ -467,7 +552,7 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 					continue
 				}
 				s.nativeCleanupRetry = ""
-				err := s.awg.Switch(ctx, c)
+				err = switchCandidateAWG(ctx, s.awg, c, attempt)
 				m.recordOperation("native_replacement", "native", contract.AWG, &c, err)
 				m.resetRoam()
 				if err != nil {
@@ -493,25 +578,38 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 					m.state.Reason = "native measurement pending"
 					break
 				}
-				m.nativeProbe(ctx, now, c)
+				m.nativeProbe(ctx, now, c, true, attempt)
 			} else if !nativeSample.valid {
-				m.nativeProbe(ctx, now, c)
+				m.nativeProbe(ctx, now, c, false, attempt)
+			} else {
+				if !nativeSample.started.IsZero() {
+					attempt.Started = nativeSample.started
+				}
+				attempt.Ready, attempt.Probes[0] = nativeSample.ready, nativeSample.probe
+				if nativeSample.present && nativeSample.probe.Outcome != "" {
+					m.observeAWGAfterProbe(ctx, s.awg, c, attempt, nativeTrafficSample{})
+				}
 			}
 			if !m.freshGeneration(generation) {
 				return m.state
 			}
 			state := s.health[key]
 			if ctx.Err() == context.Canceled || state.Last.NotMeasured != "" {
+				if state.Last.NotMeasured != "" {
+					attempt.Outcome = state.Last.NotMeasured
+				}
 				m.state.Reason = "native measurement pending"
 				break
 			}
 			if state.Healthy() {
-				m.selectConnection(c, state, generation)
+				m.selectConnection(c, state, generation, attempt)
 				s.cursor = ""
 				return m.state
 			}
 			if !state.Last.TCP || !state.Last.UDP {
 				m.cool(key, now)
+			} else {
+				attempt.Outcome = "recovering"
 			}
 			m.state.Reason = "native connection down or recovery pending"
 			s.awgSkipped = true
@@ -549,8 +647,8 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 			if s.slot != nil {
 				// It qualified (while kept, or before its cancellation): reuse it
 				// as above, with no second Start.
-				if state := s.health[connectionKey(*s.slot)]; state.Healthy() {
-					m.selectConnection(available[connectionKey(*s.slot)], state, generation)
+				if state := s.health[connectionKey(*s.slot)]; state.Healthy() && (!m.stableEgressAuto() || m.qualifiedStableEgressCarrier(now, s.slot, state)) {
+					m.selectObservedConnection(ctx, available[connectionKey(*s.slot)], state, generation, previousOwner, "fallback", connectionSample{})
 					s.cursor = ""
 					return m.state
 				}
@@ -559,31 +657,47 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 		if !slotFree {
 			continue
 		}
-		if !m.retireSlot("slot_replacement") {
+		attempt = beginAttempt(&c, previousOwner, generation, "sweep")
+		retirementNeeded := s.slot != nil || m.active != nil || m.slotCleanupPending
+		start := time.Now()
+		retired := m.retireSlot("slot_replacement")
+		if retirementNeeded {
+			outcome := "failed"
+			if retired {
+				outcome = "ok"
+			}
+			attempt.Retirement = attemptStage(start, outcome)
+		}
+		if !retired {
 			return m.state
 		}
 		copy := c.Clone()
 		s.slot = &copy
 		p := *c.Profile
 		m.active = &p
-		var startErr error
-		if backend, ok := m.backend.(budgetBackend); ok {
-			startErr = backend.StartBudget(lifetime, ctx, p)
-		} else {
-			startErr = m.backend.Start(ctx, p)
-		}
+		startErr := m.startCandidate(lifetime, ctx, p, attempt)
 		result := health.Result{}
 		if startErr == nil && ctx.Err() == nil {
+			start := time.Now()
 			result = m.runProbe(ctx, p)
+			attempt.Probes[0] = probeObservation(start, ctx, result, p.Capabilities.UDP)
 		}
 		m.state.LastProbe, m.state.ProbeConnection = result, c.ID
 		if !m.freshGeneration(generation) {
 			return m.state
 		}
-		if startErr == nil && ctx.Err() != context.Canceled && result.NotMeasured == "" && m.backend.Alive() && result.TCP && (!p.Capabilities.UDP || result.UDP) {
+		alive := false
+		if startErr == nil && ctx.Err() != context.Canceled && result.NotMeasured == "" {
+			start := time.Now()
+			alive = m.backend.Alive()
+			if attempt.Ready.Outcome == "" || !alive {
+				attempt.Ready = readinessStage(start, alive)
+			}
+		}
+		if alive && result.TCP && (!p.Capabilities.UDP || result.UDP) {
 			state := health.State{Up: true, Initialized: true, Last: result, LastCheck: now, LastChange: now}
 			s.health[key] = state
-			m.selectConnection(c, state, generation)
+			m.selectConnection(c, state, generation, attempt)
 			s.cursor = ""
 			return m.state
 		}

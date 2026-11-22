@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
@@ -20,6 +21,8 @@ type Options struct {
 	ManualGames bool                      `json:"manual_games"`
 	Profiles    map[string]contract.Class `json:"profiles,omitempty"`
 	Replace     bool                      `json:"-"`
+	DNSPort     string                    `json:"-"`
+	Continuity  bool                      `json:"-"`
 	// Net is the router's LAN. It is never persisted: when unset it is read
 	// from the LAN interface (see lan.Resolve) each time it is needed.
 	Net lan.LAN `json:"-"`
@@ -99,6 +102,15 @@ func profileReason(client string, router lan.LAN) string {
 
 var ifaceRE = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
 
+// Direct mode uses the Direct class for boot-guard compatibility and an
+// unused channel value for conntrack-only affinity. Never restore this
+// combination into the packet mark.
+const (
+	directAffinityField = "ct mark & 0xff800000"
+	directAffinityMark  = "0x43000000"
+	directAffinity      = directAffinityField + " == " + directAffinityMark
+)
+
 // ValidateOptions checks structure only. Device profiles need a private IPv4
 // address and a known class; membership in the live LAN is not checked here,
 // because stored settings must load whatever the LAN is now. Build renders
@@ -107,6 +119,9 @@ var ifaceRE = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
 func ValidateOptions(o Options) error {
 	if !ifaceRE.MatchString(o.LAN) || !ifaceRE.MatchString(o.WAN) || o.LAN == o.WAN {
 		return fmt.Errorf("invalid LAN/WAN interfaces")
+	}
+	if o.Continuity && (o.LAN == contract.ContinuityDevice || o.WAN == contract.ContinuityDevice) {
+		return fmt.Errorf("continuity interface conflicts with LAN/WAN")
 	}
 	if o.TestClient != "" {
 		ip, e := netip.ParseAddr(o.TestClient)
@@ -117,6 +132,10 @@ func ValidateOptions(o Options) error {
 	for _, c := range []contract.Channel{o.Selection.General, o.Selection.Games} {
 		switch c {
 		case contract.Down, contract.AWG, contract.Gecko, contract.VLESS:
+		case contract.Continuity:
+			if !o.Continuity {
+				return fmt.Errorf("continuity egress requires an enabled bridge")
+			}
 		default:
 			return fmt.Errorf("invalid channel %q", c)
 		}
@@ -145,11 +164,11 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	if e := ValidateOptions(o); e != nil {
 		return Batch{}, e
 	}
-	router, e := o.ResolveLAN()
-	if e != nil {
-		router = lan.LAN{}
+	dnsRule, err := dnsRedirectRule(p, o)
+	if err != nil {
+		return Batch{}, err
 	}
-	profiles, _ := ActiveProfiles(o.Profiles, router)
+	router, profiles := activeProfileOptions(o)
 	var s strings.Builder
 	if o.Replace {
 		s.WriteString("delete table inet flr\n")
@@ -170,6 +189,9 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	}
 	staticSet("local4", "local-ips")
 	staticSet("broad_direct4", "roscom-direct-ips")
+	staticSet("required_static4", "vpn-required")
+	staticSet("essential_static4", "direct-essential")
+	staticSet("games_static4", "game-platforms")
 	staticSet("service_static4", "vpn-services")
 	// The owner's custom address rules (policy/custom.go): disjoint sets
 	// matched before every list-derived set below.
@@ -197,7 +219,11 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 		fmt.Fprintf(&s, " set %s { type ipv4_addr; flags timeout; timeout 1h; }\n", name)
 	}
 	fmt.Fprintf(&s, " map egress { type mark : verdict; elements = { 0x01000000 : goto %s, 0x02000000 : goto %s }; }\n", o.Selection.General, o.Selection.Games)
-	for _, channel := range []contract.Channel{contract.Down, contract.AWG, contract.Gecko, contract.VLESS} {
+	channels := []contract.Channel{contract.Down, contract.AWG, contract.Gecko, contract.VLESS}
+	if o.Continuity {
+		channels = append(channels, contract.Continuity)
+	}
+	for _, channel := range channels {
 		fmt.Fprintf(&s, " chain %s { ct mark set (ct mark & 0x8fffffff) | %#08x; jump restore; }\n", channel, contract.ChannelMark(channel))
 	}
 	s.WriteString(" chain restore {\n")
@@ -209,7 +235,7 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	s.WriteString(" }\n")
 	s.WriteString(" chain classify {\n  meta mark & 0x80000000 != 0 return\n  ip daddr @local4 ct mark & 0xff800000 == 0 return\n  ip saddr @profile_pending4 counter drop\n  ip saddr @profile_direct4 goto profile_direct\n  ct mark & 0xff800000 != 0 jump restore\n  ct mark & 0xff800000 != 0 return\n  ip saddr @profile_general4 goto profile_general\n  ct state != new ip saddr != @profile_games4 return\n")
 	assign := func(c contract.Class) {
-		fmt.Fprintf(&s, "ct mark set (ct mark & 0x007fffff) | %#08x goto selected\n", contract.ClassMark(c))
+		s.WriteString(classificationRule(c))
 	}
 	s.WriteString("  ip daddr @custom_vpn4 ")
 	assign(contract.General)
@@ -217,11 +243,17 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	assign(contract.Direct)
 	s.WriteString("  ip daddr @required4 ")
 	assign(contract.General)
+	s.WriteString("  ip daddr @required_static4 ")
+	assign(contract.General)
 	s.WriteString("  ip daddr @essential4 ")
+	assign(contract.Direct)
+	s.WriteString("  ip daddr @essential_static4 ")
 	assign(contract.Direct)
 	s.WriteString("  ip saddr @profile_games4 ")
 	assign(contract.Games)
 	s.WriteString("  ip daddr @games4 ")
+	assign(contract.Games)
+	s.WriteString("  ip daddr @games_static4 ")
 	assign(contract.Games)
 	s.WriteString("  ip daddr @services4 ")
 	assign(contract.General)
@@ -231,37 +263,59 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	assign(contract.Direct)
 	s.WriteString("  ip daddr @broad_direct4 ")
 	assign(contract.Direct)
-	s.WriteString("  ")
-	assign(contract.General)
+	s.WriteString("  goto routing_default\n }\n chain routing_default {\n  ")
+	assign(p.DefaultClass())
 	s.WriteString(" }\n")
 	s.WriteString(" chain selected {\n  ct mark & 0x0f000000 vmap @egress\n  jump restore\n }\n")
-	scope := fmt.Sprintf(`iifname "%s"`, o.LAN)
-	if o.TestClient != "" {
-		scope += " ip saddr " + o.TestClient
+	s.WriteString(" chain route_direct {\n  meta mark & 0x80000000 != 0 return\n  ct mark & 0xff800000 != 0 goto restore\n  ct mark set (ct mark & 0x007fffff) | " + directAffinityMark + "\n }\n")
+	route, guard := routingModeRules(p)
+	fmt.Fprintf(&s, " chain routing_mode {\n  %s\n }\n chain routing_guards {\n", route)
+	if guard != "" {
+		fmt.Fprintf(&s, "  %s\n", guard)
 	}
-	fmt.Fprintf(&s, " chain preroute { type filter hook prerouting priority -151; policy accept;\n  %s jump classify\n }\n", scope)
-	fmt.Fprintf(&s, " chain guard { type filter hook forward priority -5; policy accept;\n  meta mark & 0x80000000 == 0 ip daddr @profile_pending4 ip saddr != @local4 counter drop\n  meta mark & 0x80000000 == 0 ip saddr @profile_pending4 ip daddr != @local4 counter drop\n  meta mark & 0x0f000000 { 0x01000000, 0x02000000 } oifname \"%s\" counter drop\n  iifname \"%s\" meta nfproto ipv6 oifname \"%s\" counter drop\n }\n", o.WAN, o.LAN, o.WAN)
-	fmt.Fprintf(&s, " chain output_guard { type filter hook output priority -5; policy accept;\n  meta mark & 0x80000000 == 0 meta mark & 0x0f000000 { 0x01000000, 0x02000000 } oifname \"%s\" counter drop\n }\n", o.WAN)
-	fmt.Fprintf(&s, " chain nat { type nat hook postrouting priority 99; policy accept;\n  %s oifname \"flr_awg\" masquerade\n }\n", scope)
+	s.WriteString(" }\n")
+	scope := lanIngress(o)
+	fmt.Fprintf(&s, " chain preroute { type filter hook prerouting priority -151; policy accept;\n  %s return\n  %s jump routing_mode\n }\n", directAffinity, scope)
+	fmt.Fprintf(&s, " chain policy_guards {\n  meta mark & 0x80000000 == 0 ip daddr @profile_pending4 ip saddr != @local4 counter drop\n  meta mark & 0x80000000 == 0 ip saddr @profile_pending4 ip daddr != @local4 counter drop\n  iifname \"%s\" meta nfproto ipv6 oifname \"%s\" counter drop\n }\n", o.LAN, o.WAN)
+	// Reject stale anchored flows even when the optional egress has been
+	// removed. Their conntrack mark can outlive the controller that set it.
+	continuityMark := fmt.Sprintf("  meta mark & %#08x == %#08x", contract.ChannelMask, contract.ChannelMark(contract.Continuity))
+	continuityEgressGuard := continuityMark + " counter drop\n"
+	var continuityIngressGuard string
+	if o.Continuity {
+		continuityEgressGuard = fmt.Sprintf("%s oifname != %q counter drop\n", continuityMark, contract.ContinuityDevice)
+		continuityIngressGuard = fmt.Sprintf("  iifname %q ct state != { established, related } counter drop\n", contract.ContinuityDevice)
+		fmt.Fprintf(&s, " chain input_guard { type filter hook input priority -5; policy accept;\n%s }\n", continuityIngressGuard)
+	}
+	fmt.Fprintf(&s, " chain guard { type filter hook forward priority -5; policy accept;\n%s%s  meta mark & 0x0f000000 { 0x01000000, 0x02000000 } oifname \"%s\" counter drop\n  %s return\n  jump routing_guards\n }\n", continuityEgressGuard, continuityIngressGuard, o.WAN, directAffinity)
+	fmt.Fprintf(&s, " chain output_guard { type filter hook output priority -5; policy accept;\n%s  meta mark & 0x80000000 == 0 meta mark & 0x0f000000 { 0x01000000, 0x02000000 } oifname \"%s\" counter drop\n }\n", continuityEgressGuard, o.WAN)
+	fmt.Fprintf(&s, " chain nat { type nat hook postrouting priority 99; policy accept;\n  %s oifname \"flr_awg\" masquerade\n", scope)
+	if o.Continuity {
+		fmt.Fprintf(&s, "  %s meta nfproto ipv4 oifname %q masquerade\n", scope, contract.ContinuityDevice)
+	}
+	s.WriteString(" }\n")
+	s.WriteString(" chain dns { type nat hook prerouting priority -100; policy accept;\n")
+	if dnsRule != "" {
+		fmt.Fprintf(&s, "  %s\n", dnsRule)
+	}
+	s.WriteString(" }\n")
 	s.WriteString(" chain session_out { type filter hook output priority -151; policy accept; meta mark & 0xff800000 == 0x80800000 ct mark set (ct mark & 0x007fffff) | 0x80800000; }\n")
 	s.WriteString("}\n")
 	b := Batch{Nft: s.String(), Options: o, LAN: router, Profiles: profiles}
-	for i, c := range []contract.Channel{contract.AWG, contract.Gecko, contract.VLESS} {
+	for _, c := range channels[1:] {
 		table := contract.Table(c)
-		b.Routes = append(b.Routes, Route{Table: table, Unreachable: true, Metric: 32767}, Route{Table: table, Device: map[contract.Channel]string{contract.AWG: "flr_awg", contract.Gecko: "flr-hy", contract.VLESS: "flr-vless"}[c], Metric: 100})
-		b.Rules = append(b.Rules, Rule{Priority: 1770 + i, Table: table, Mark: contract.ChannelMark(c), Mask: contract.ChannelMask})
+		b.Routes = append(b.Routes, Route{Table: table, Unreachable: true, Metric: 32767}, Route{Table: table, Device: ownedRouteDevices[table], Metric: 100})
+		b.Rules = append(b.Rules, channelRule(c))
 	}
-	b.Routes = append(b.Routes, Route{Table: 773, Unreachable: true, Metric: 32767})
-	for i, c := range []contract.Class{contract.General, contract.Games} {
-		b.Rules = append(b.Rules, Rule{Priority: 1780 + i, Table: 773, Mark: contract.ClassMark(c), Mask: contract.ClassMask})
-	}
+	b.Routes = append(b.Routes, Route{Table: terminalClassTable, Unreachable: true, Metric: 32767})
+	b.Rules = append(b.Rules, terminalClassRules[:]...)
 	return b, nil
 }
 
 // SelectionBatch is the same atomic map transaction used by runtime and the
 // isolated kernel qualification. It cannot change channel resources.
 func SelectionBatch(s contract.Selection, manualGames bool) (string, error) {
-	if e := ValidateOptions(Options{LAN: "br-lan", WAN: "eth1", Selection: s, ManualGames: manualGames}); e != nil {
+	if e := ValidateOptions(Options{LAN: "br-lan", WAN: "eth1", Selection: s, ManualGames: manualGames, Continuity: true}); e != nil {
 		return "", e
 	}
 	return fmt.Sprintf("flush map inet flr egress\nadd element inet flr egress { 0x01000000 : goto %s, 0x02000000 : goto %s }\n", s.General, s.Games), nil
@@ -274,12 +328,41 @@ func UpdateSelection(s contract.Selection, manualGames bool) error {
 	return runInput(request, "nft", "-f", "-")
 }
 
-// StaticSetsBatch rewrites the policy's static CIDR sets of a running flr
-// table in one transaction (a routing mode or custom rule change). Only new flows are
-// classified against them, so established flows keep their channel.
+func classificationRule(class contract.Class) string {
+	return fmt.Sprintf("ct mark set (ct mark & 0x007fffff) | %#08x goto selected\n", contract.ClassMark(class))
+}
+
+func routingModeRules(p *policy.Policy) (route, guard string) {
+	if p.Bypass() {
+		return "goto route_direct", ""
+	}
+	return "goto classify", "jump policy_guards"
+}
+
+func lanIngress(o Options) string {
+	scope := fmt.Sprintf(`iifname "%s"`, o.LAN)
+	if o.TestClient != "" {
+		scope += " ip saddr " + o.TestClient
+	}
+	return scope
+}
+
+func dnsRedirectRule(p *policy.Policy, o Options) (string, error) {
+	if p.Bypass() || o.DNSPort == "" {
+		return "", nil
+	}
+	port, err := strconv.Atoi(o.DNSPort)
+	if err != nil || port < 1 || port > 65535 {
+		return "", fmt.Errorf("invalid DNS port")
+	}
+	return fmt.Sprintf("%s meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 redirect to :%d", lanIngress(o), port), nil
+}
+
+// StaticSetsBatch updates static CIDRs, the fallback classifier, and the
+// mode's routing and forwarding chains without replacing the table.
 func StaticSetsBatch(p *policy.Policy) string {
 	var s strings.Builder
-	for _, set := range []struct{ name, source string }{{"local4", "local-ips"}, {"broad_direct4", "roscom-direct-ips"}, {"service_static4", "vpn-services"}, {"custom_vpn4", policy.CustomVPNSource}, {"custom_direct4", policy.CustomDirectSource}} {
+	for _, set := range []struct{ name, source string }{{"local4", "local-ips"}, {"broad_direct4", "roscom-direct-ips"}, {"required_static4", "vpn-required"}, {"essential_static4", "direct-essential"}, {"games_static4", "game-platforms"}, {"service_static4", "vpn-services"}, {"custom_vpn4", policy.CustomVPNSource}, {"custom_direct4", policy.CustomDirectSource}} {
 		fmt.Fprintf(&s, "flush set inet flr %s\n", set.name)
 		var entries []string
 		for _, ip := range p.CIDRs(set.source) {
@@ -291,7 +374,41 @@ func StaticSetsBatch(p *policy.Policy) string {
 			fmt.Fprintf(&s, "add element inet flr %s { %s }\n", set.name, strings.Join(entries, ", "))
 		}
 	}
+	s.WriteString("flush chain inet flr routing_default\nadd rule inet flr routing_default ")
+	s.WriteString(classificationRule(p.DefaultClass()))
+	route, guard := routingModeRules(p)
+	fmt.Fprintf(&s, "flush chain inet flr routing_mode\nadd rule inet flr routing_mode %s\nflush chain inet flr routing_guards\n", route)
+	if guard != "" {
+		fmt.Fprintf(&s, "add rule inet flr routing_guards %s\n", guard)
+	}
 	return s.String()
+}
+
+// RoutingPolicyBatch publishes DNS interception, active profiles, and the
+// routing mode together. Existing NAT associations remain in conntrack.
+func RoutingPolicyBatch(p *policy.Policy, o Options) (string, error) {
+	if err := ValidateOptions(o); err != nil {
+		return "", err
+	}
+	rule, err := dnsRedirectRule(p, o)
+	if err != nil {
+		return "", err
+	}
+	_, profiles := activeProfileOptions(o)
+	batch := StaticSetsBatch(p) + profilesBatch(profiles) + "flush chain inet flr dns\n"
+	if rule != "" {
+		batch += "add rule inet flr dns " + rule + "\n"
+	}
+	return batch, nil
+}
+
+func activeProfileOptions(o Options) (lan.LAN, map[string]contract.Class) {
+	router, err := o.ResolveLAN()
+	if err != nil {
+		router = lan.LAN{}
+	}
+	profiles, _ := ActiveProfiles(o.Profiles, router)
+	return router, profiles
 }
 
 // UpdateStaticSets applies StaticSetsBatch to the kernel.

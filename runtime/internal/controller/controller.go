@@ -48,6 +48,7 @@ type Status struct {
 	Requested           connection.Selection      `json:"requested"`
 	ActiveConnection    *connection.Summary       `json:"active_connection,omitempty"`
 	Proxy               transport.Snapshot        `json:"proxy"`
+	Continuity          *continuityStatus         `json:"continuity,omitempty"`
 	DirectBypassRunning bool                      `json:"direct_bypass_running"`
 	Version             string                    `json:"version"`
 	Selection           contract.Selection        `json:"selection"`
@@ -83,6 +84,8 @@ type Controller struct {
 	deactivationPending   bool
 	recoveryPending       func() bool
 	transports            *transport.Manager
+	continuity            continuityState
+	continuityDeferred    bool // protected by adminMu
 	activeProfile         *profile.Summary
 	activeConnection      *connection.Summary
 	transportState        transport.Snapshot
@@ -100,7 +103,7 @@ type Controller struct {
 	live                  bool
 	vpnStarted            bool
 	vpnRestart            bool
-	vpnDone               chan struct{}
+	vpnDone               <-chan error
 	vpnCancel             context.CancelFunc
 	settings              Settings
 	states                map[contract.Channel]health.State
@@ -130,10 +133,11 @@ type Controller struct {
 	renderProfiles func(map[string]contract.Class) error
 	broker         *dnsbroker.Broker
 	// basePolicy is the installed policy; policy is its view for appliedMode
-	// (Settings.RoutingMode). applyStaticSets is replaced in tests.
-	basePolicy      *policy.Policy
-	appliedMode     string
-	applyStaticSets func(*policy.Policy) error
+	// (Settings.RoutingMode). A reload marks the view dirty until publication.
+	basePolicy         *policy.Policy
+	appliedMode        string
+	routingDirty       bool
+	applyRoutingPolicy func(*policy.Policy) error
 	// routing: custom rules and routing policy API state (policy_api.go).
 	routing routingState
 	// roscom is the last RoscomVPN import job (roscomvpn_api.go), guarded by
@@ -297,7 +301,7 @@ func (c *Controller) checkDirectChange(next control.DirectConfig) error {
 func (c *Controller) DNSRoute(_ contract.Class) (contract.Channel, uint64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.selection.General, c.generation
+	return c.dnsChannelLocked(), c.generation
 }
 func (c *Controller) ClientView(client, name string) (dnsbroker.View, bool) {
 	c.mu.RLock()
@@ -319,7 +323,7 @@ func (c *Controller) ClientView(client, name string) (dnsbroker.View, bool) {
 			}
 		}
 	}
-	return dnsbroker.View{ID: "device:" + client + ":" + string(class), Class: class, Source: source, Channel: c.selection.General, Generation: c.generation}, true
+	return dnsbroker.View{ID: "device:" + client + ":" + string(class), Class: class, Source: source, Channel: c.dnsChannelLocked(), Generation: c.generation}, true
 }
 func (c *Controller) Status() Status {
 	c.mu.RLock()
@@ -335,9 +339,12 @@ func (c *Controller) Status() Status {
 	if c.manual == contract.VLESS {
 		manual = "vless"
 	}
-	s := Status{DirectBypassRunning: c.bypassRunning, Version: "0.7-runtime", Selection: c.selection, ManualGames: manual, Generation: c.generation, TestClient: c.settings.Options.TestClient, DNSPort: c.settings.DNSPort, Profiles: profiles, Channels: channels, Updated: time.Now(), LastError: c.lastError}
+	s := Status{DirectBypassRunning: c.bypassRunning, Version: contract.RuntimeVersion, Selection: c.selection, ManualGames: manual, Generation: c.generation, TestClient: c.settings.Options.TestClient, DNSPort: c.settings.DNSPort, Profiles: profiles, Channels: channels, Updated: time.Now(), LastError: c.lastError}
 	s.Requested = c.settings.Selection
 	s.Proxy = c.transportState
+	if c.continuity.bridge != nil {
+		s.Continuity = &continuityStatus{Carrier: c.continuity.path.Channel, Active: c.appliedMode != policy.ModeDirect}
+	}
 	if c.history != nil {
 		s.Diagnostics = c.history.Summary(c.wan.Snapshot())
 		s.Diagnostics.SnapshotPending = c.diagnosticSavePending.Load()
@@ -432,11 +439,8 @@ func (c *Controller) quiesceConnections() error {
 	defer c.mu.Unlock()
 	from := c.activeConnection
 	down := contract.Selection{General: contract.Down, Games: contract.Down}
-	publish := c.publishSelection
-	if publish == nil {
-		publish = func(s contract.Selection) error { return dataplane.UpdateSelection(s, false) }
-	}
-	err := publish(down)
+	c.pauseContinuityLocked(c.continuity.path.Channel)
+	err := c.publishEgressLocked(down)
 	if err == nil {
 		c.selection = down
 		c.activeProfile = nil
@@ -476,6 +480,7 @@ func (c *Controller) quiesceChannel(channel contract.Channel, reason string) err
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.pauseContinuityLocked(channel)
 	next := c.selection
 	affected := next.General == channel || next.Games == channel
 	if next.General == channel {
@@ -485,11 +490,7 @@ func (c *Controller) quiesceChannel(channel contract.Channel, reason string) err
 		next.Games = contract.Down
 	}
 	if next != c.selection {
-		publish := c.publishSelection
-		if publish == nil {
-			publish = func(s contract.Selection) error { return dataplane.UpdateSelection(s, false) }
-		}
-		err := publish(next)
+		err := c.publishEgressLocked(next)
 		c.recordDecision(diagnostic.Decision{At: time.Now(), Epoch: c.choiceEpoch, From: summaryIdentity(c.activeConnection), Reason: reason, Stage: "nft", Channel: channel, Outcome: operationOutcome(err)})
 		if err != nil {
 			return err
@@ -551,6 +552,7 @@ func (c *Controller) round(ctx context.Context) {
 		c.wan.Start(lifetime)
 	}
 	before := c.transports.Snapshot()
+	registry, order := c.continuityCandidates()
 	var next transport.Snapshot
 	if c.settings.Version == 2 {
 		c.mu.RLock()
@@ -560,7 +562,7 @@ func (c *Controller) round(ctx context.Context) {
 			c.transports.SetRoamSuspended(testing)
 			c.roamSuspended = testing
 		}
-		next = c.transports.StepConnections(ctx, time.Now(), c.connections, c.settings.Selection, c.settings.Order, c.choiceEpoch)
+		next = c.transports.StepConnections(ctx, time.Now(), registry, c.settings.Selection, order, c.choiceEpoch)
 	} else {
 		result := health.Result{}
 		present := health.Present(contract.AWG)
@@ -584,7 +586,7 @@ func (c *Controller) round(ctx context.Context) {
 		published := !c.transportState.Pending
 		c.mu.RUnlock()
 		if published {
-			if warmed, changed := c.transports.StepWarmReserve(ctx, time.Now(), c.connections, c.settings.Selection, c.settings.Order, c.choiceEpoch); changed {
+			if warmed, changed := c.transports.StepWarmReserve(ctx, time.Now(), registry, c.settings.Selection, order, c.choiceEpoch); changed {
 				c.publishTransport(next, warmed)
 				next = warmed
 			}
@@ -602,8 +604,8 @@ func (s Settings) warmPolicy() transport.WarmPolicy {
 	return transport.WarmPolicy{Enabled: s.Version == 2 && w.Enabled, Interval: time.Duration(w.IntervalSeconds) * time.Second}
 }
 
-// A lost AWG must retire its old flows before publishing a backup. Remember
-// partial failures independently of the manager's health transition for retry.
+// Remember partial AWG cleanup independently of the manager's health
+// transition. Native reuse always requires successful cleanup.
 func (c *Controller) publishTransport(before, next transport.Snapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -637,15 +639,11 @@ func (c *Controller) publishTransport(before, next transport.Snapshot) {
 	if (before.AWG.Healthy() && !next.AWG.Healthy() && !soft) || (before.AWG.Failures < 3 && next.AWG.Failures >= 3) {
 		c.awgCleanupPending = true
 	}
-	publish := c.publishSelection
-	if publish == nil {
-		publish = func(s contract.Selection) error { return dataplane.UpdateSelection(s, false) }
-	}
 	set := func(s contract.Selection) error {
 		if s == c.selection {
 			return nil
 		}
-		if e := publish(s); e != nil {
+		if e := c.publishEgressLocked(s); e != nil {
 			return e
 		}
 		c.selection = s
@@ -653,6 +651,7 @@ func (c *Controller) publishTransport(before, next transport.Snapshot) {
 		return nil
 	}
 	if c.awgCleanupPending {
+		c.pauseContinuityLocked(contract.AWG)
 		down := c.selection
 		if down.General == contract.AWG {
 			down.General = contract.Down
@@ -671,19 +670,20 @@ func (c *Controller) publishTransport(before, next transport.Snapshot) {
 			c.activeProfile = nil
 			c.activeConnection = nil
 		}
-		clear := c.clearAWG
-		if clear == nil {
-			clear = dataplane.ClearAWG
-		}
-		if e := clear(); e != nil {
+		if c.continuity.bridge != nil && continuityPath(next).Channel == contract.Gecko {
+			// The stable application flows and qualified Hysteria2 carrier own
+			// different marks. Resume forwarding before retrying native cleanup.
+			defer func() {
+				if !c.clearFailedAWGLocked(from, next) && c.lastError == "" {
+					c.lastError = "AWG cleanup failed; retry pending"
+				}
+			}()
+		} else if !c.clearFailedAWGLocked(from, next) {
 			c.lastError = "AWG cleanup failed; retry pending"
 			c.transportState.Pending = true
 			c.transportState.Reason = "cleanup_pending"
-			c.recordPublication(from, next, "conntrack", "failed")
 			return
 		}
-		c.recordPublication(from, next, "conntrack", "applied")
-		c.awgCleanupPending = false
 	}
 	if e := set(next.Selection); e != nil {
 		c.lastError = "selection update failed"
@@ -694,26 +694,45 @@ func (c *Controller) publishTransport(before, next transport.Snapshot) {
 	}
 	c.activeProfile = next.Active
 	c.activeConnection = next.ActiveConnection
-	if summaryIdentity(from) != summaryIdentity(next.ActiveConnection) || before.Selection != next.Selection {
+	c.lastError = next.LastError
+	changed := summaryIdentity(from) != summaryIdentity(next.ActiveConnection) || before.Selection != next.Selection
+	if c.continuity.bridge != nil {
+		prevPath := c.continuity.path
+		if err := c.selectContinuityLocked(next); err != nil || changed || prevPath != c.continuity.path {
+			c.recordPublication(from, next, "selection", operationOutcome(err))
+		}
+	} else if changed {
 		c.recordPublication(from, next, "nft", "applied")
 	}
-	c.lastError = next.LastError
+}
+
+func (c *Controller) clearFailedAWGLocked(from *connection.Summary, next transport.Snapshot) bool {
+	clear := c.clearAWG
+	if clear == nil {
+		clear = dataplane.ClearAWG
+	}
+	err := clear()
+	c.awgCleanupPending = err != nil
+	c.recordPublication(from, next, "conntrack", operationOutcome(err))
+	return err == nil
 }
 
 // startVPN is separate from the controller API lifetime. A clean-image direct
 // listener can use the controller without installing VPN guards or DNS redirects.
-func (c *Controller) startVPN(ctx context.Context, p *policy.Policy, done chan<- error) error {
-	// The VPN starts with the view of the stored routing mode.
-	if p != nil {
-		mode := c.settings.EffectiveRoutingMode()
-		if c.basePolicy == nil {
-			c.basePolicy = p
+func (c *Controller) startVPN() error {
+	mode := c.settings.EffectiveRoutingMode()
+	p := c.basePolicy.ForMode(mode)
+	c.continuityDeferred = p.Bypass()
+	if !c.continuityDeferred {
+		if e := c.startContinuity(); e != nil {
+			return e
 		}
-		p = c.basePolicy.ForMode(mode)
-		c.mu.Lock()
-		c.policy, c.appliedMode = p, mode
-		c.mu.Unlock()
 	}
+	defer func() {
+		if !c.vpnStarted {
+			c.stopContinuity()
+		}
+	}()
 	if e := dataplane.ClearSession(); e != nil {
 		return e
 	}
@@ -725,15 +744,13 @@ func (c *Controller) startVPN(ctx context.Context, p *policy.Policy, done chan<-
 	if e != nil {
 		return e
 	}
-	if e = dataplane.Apply(b); e != nil {
-		return e
-	}
-	c.mu.Lock()
-	c.renderedLAN = b.LAN
-	c.mu.Unlock()
 	o := b.Options
-	if e = dataplane.ConfigureDNS(c.settings.DNSPort, o.TestClient); e != nil {
-		return e
+	if p.Bypass() {
+		boot, err := dataplane.PrepareRoutingBootGuard(c.basePolicy, o)
+		if err != nil {
+			return err
+		}
+		b.Nft += boot
 	}
 	broker := dnsbroker.New(p, c, dnsbroker.NewKernelMappings())
 	broker.LocalPort = c.settings.LocalDNSPort
@@ -743,17 +760,22 @@ func (c *Controller) startVPN(ctx context.Context, p *policy.Policy, done chan<-
 		broker.Router = c.router.Addr
 	}
 	c.broker = broker
-	vpnCtx, cancel := context.WithCancel(ctx)
-	c.vpnCancel = cancel
-	c.vpnDone = make(chan struct{})
-	address := "0.0.0.0:" + c.settings.DNSPort
-	go func() {
-		err := broker.Serve(vpnCtx, address)
-		close(c.vpnDone)
-		if err != nil && vpnCtx.Err() == nil {
-			done <- err
+	if e = config.SetRoutingDNS(p.Bypass()); e != nil {
+		return e
+	}
+	if !p.Bypass() {
+		if e = c.startRoutingDNS(); e != nil {
+			return e
 		}
-	}()
+	}
+	if e = dataplane.Apply(b); e != nil {
+		c.stopRoutingDNS()
+		return e
+	}
+	c.mu.Lock()
+	c.renderedLAN = b.LAN
+	c.policy, c.appliedMode, c.routingDirty = p, mode, false
+	c.mu.Unlock()
 	quiesce := c.quiesceSlot
 	if c.settings.Version == 2 {
 		quiesce = c.quiesceConnections
@@ -764,8 +786,10 @@ func (c *Controller) startVPN(ctx context.Context, p *policy.Policy, done chan<-
 	c.roamSuspended = false
 	if c.settings.Version == 2 {
 		c.transports.SetAWGBackend(transport.NativeAWG{WAN: o.WAN})
+		c.configureContinuityProbes()
 		c.transports.SetChannelCleanup(c.quiesceChannel)
 		c.transports.SetDecisionRecorder(c.recordDecision)
+		c.transports.SetAttemptRecorder(c.recordAttempt)
 	}
 	c.vpnStarted = true
 	return nil
@@ -777,7 +801,12 @@ func (c *Controller) vpnBatch(p *policy.Policy, replace bool) (dataplane.Batch, 
 	o := c.settings.Options
 	o.Replace = replace
 	o.Selection = c.selection
+	if c.continuity.bridge != nil {
+		o.Continuity = true
+		o.Selection = contract.Selection{General: contract.Continuity, Games: contract.Continuity}
+	}
 	o.ManualGames = false
+	o.DNSPort = c.settings.DNSPort
 	if o.Net.IsZero() {
 		o.Net = c.router
 	}
@@ -842,9 +871,8 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 		if c.transports != nil {
 			c.transports.Shutdown()
 		}
-		if c.vpnCancel != nil {
-			c.vpnCancel()
-		}
+		c.stopRoutingDNS()
+		c.stopContinuity()
 		c.adminMu.Unlock()
 		c.testWorkers.Wait()
 	}()
@@ -870,9 +898,13 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 		// DNS broker follow a LAN that appears or changes after start.
 		c.refreshLAN()
 		c.reconcileDirect(ctx)
-		bypassError := c.bypass.Reconcile(ctx, c.settings.DirectBypass, c.settings.Options.WAN)
+		bypassConfig := c.settings.DirectBypass
+		if c.appliedMode == policy.ModeDirect || c.settings.EffectiveRoutingMode() == policy.ModeDirect {
+			bypassConfig.Enabled = false
+		}
+		bypassError := c.bypass.Reconcile(ctx, bypassConfig, c.settings.Options.WAN)
 		c.mu.Lock()
-		c.bypassRunning = c.settings.DirectBypass.Enabled && bypassError == nil
+		c.bypassRunning = bypassConfig.Enabled && bypassError == nil
 		if bypassError != nil {
 			c.lastError = bypassError.Error()
 		}
@@ -882,10 +914,8 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 			if c.transports != nil {
 				e = c.transports.Shutdown()
 			}
-			if c.vpnCancel != nil {
-				c.vpnCancel()
-				<-c.vpnDone
-			}
+			c.stopRoutingDNS()
+			c.stopContinuity()
 			c.vpnStarted = false
 			c.transports = nil
 			c.vpnRestart = false
@@ -897,16 +927,14 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 			c.reconcileQueueing(false)
 		}
 		if e == nil && enabled && !c.vpnStarted {
-			e = c.startVPN(ctx, p, done)
+			e = c.startVPN()
 		} else if !enabled {
 			if c.vpnStarted {
 				if c.transports != nil {
 					e = c.transports.Shutdown()
 				}
-				if c.vpnCancel != nil {
-					c.vpnCancel()
-					<-c.vpnDone
-				}
+				c.stopRoutingDNS()
+				c.stopContinuity()
 				c.sessions.Stop()
 				c.vpnStarted = false
 				c.transports = nil
@@ -932,6 +960,7 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 		if e == nil && c.vpnStarted {
 			c.syncProfiles()
 		}
+		dnsDone := c.vpnDone
 		c.adminMu.Unlock()
 		if e != nil {
 			return e
@@ -956,9 +985,11 @@ func (c *Controller) Run(ctx context.Context, p *policy.Policy) error {
 		case <-ctx.Done():
 			return nil
 		case e = <-done:
-			// Closing a disabled VPN broker is expected. Control/API socket failures
-			// remain fatal; context cancellation is handled by the main stop path.
 			if e != nil {
+				return e
+			}
+		case e = <-dnsDone:
+			if e != nil && e != context.Canceled {
 				return e
 			}
 		case <-ticker.C:
@@ -1015,20 +1046,27 @@ func (c *Controller) reconcileDirect(ctx context.Context) {
 }
 
 // reconcileRoutingMode applies a stored routing mode change to the running
-// VPN without a restart: the static direct set is rewritten, and the DNS
-// broker classifies new answers with the new view and rebinds the addresses
-// it already issued. Only new flows are classified, so
-// no established session changes channel. A failure retries on the next tick.
+// VPN without a restart. The fallback, static sets, and outstanding DNS
+// bindings are published together. Established flows keep their marks.
+// A failure retries on the next tick.
 // Callers hold adminMu.
 func (c *Controller) reconcileRoutingMode() {
 	mode := c.settings.EffectiveRoutingMode()
-	if c.basePolicy == nil || mode == c.appliedMode {
+	if c.basePolicy == nil || (mode == c.appliedMode && !c.routingDirty) {
 		return
 	}
 	view := c.basePolicy.ForMode(mode)
-	apply := c.applyStaticSets
+	if c.continuityDeferred && !view.Bypass() {
+		if e := c.enableDeferredContinuity(); e != nil {
+			c.mu.Lock()
+			c.lastError = e.Error()
+			c.mu.Unlock()
+			return
+		}
+	}
+	apply := c.applyRoutingPolicy
 	if apply == nil {
-		apply = dataplane.UpdateStaticSets
+		apply = c.switchRoutingPolicy
 	}
 	if e := apply(view); e != nil {
 		c.mu.Lock()
@@ -1036,17 +1074,8 @@ func (c *Controller) reconcileRoutingMode() {
 		c.mu.Unlock()
 		return
 	}
-	if c.broker != nil {
-		if e := c.broker.SetPolicy(view); e != nil {
-			c.mu.Lock()
-			c.policy = view
-			c.lastError = "routing mode " + mode + ": DNS bindings not rewritten yet; retrying"
-			c.mu.Unlock()
-			return
-		}
-	}
 	c.mu.Lock()
-	c.policy, c.appliedMode = view, mode
+	c.policy, c.appliedMode, c.routingDirty = view, mode, false
 	c.mu.Unlock()
 }
 

@@ -1,13 +1,199 @@
 package dataplane
 
 import (
+	"errors"
+	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/contract"
+	"github.com/MyHeartRaces/FLR/runtime/internal/lan"
 	"github.com/MyHeartRaces/FLR/runtime/internal/policy"
 )
+
+func TestRoutingFallbackIsPartOfNewFlowClassification(t *testing.T) {
+	p, err := policy.Load("../policy/testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for mode, class := range map[string]contract.Class{"tunnel": contract.Direct, "proxy": contract.General} {
+		view := p.ForMode(mode)
+		batch, err := Build(view, Options{LAN: "br-lan", WAN: "eth1", Selection: contract.Selection{General: contract.Down, Games: contract.Down}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		mark := fmt.Sprintf("ct mark set (ct mark & 0x007fffff) | %#08x goto selected", contract.ClassMark(class))
+		if !strings.Contains(batch.Nft, "goto routing_default\n") || !strings.Contains(batch.Nft, "chain routing_default {\n  "+mark+"\n") {
+			t.Errorf("%s: missing mode fallback in classifier", mode)
+		}
+		if got := StaticSetsBatch(view); !strings.Contains(got, "flush chain inet flr routing_default\nadd rule inet flr routing_default "+mark+"\n") {
+			t.Errorf("%s: missing atomic mode fallback in %s", mode, got)
+		}
+	}
+}
+
+func TestDirectRoutingBypassesPolicyAndKeepsExistingMarks(t *testing.T) {
+	p, err := policy.Load("../policy/testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := Options{LAN: "br-lan", WAN: "eth1", Selection: contract.Selection{General: contract.AWG, Games: contract.Gecko}}
+	direct := p.ForMode(policy.ModeDirect)
+	batch, err := Build(direct, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"chain routing_mode {\n  goto route_direct\n }",
+		"chain routing_guards {\n }",
+		"ct mark & 0xff800000 != 0 goto restore\n  ct mark set (ct mark & 0x007fffff) | 0x43000000\n",
+		"ct mark & 0xff800000 == 0x43000000 return\n  iifname \"br-lan\" jump routing_mode\n",
+		"meta mark & 0x0f000000 { 0x01000000, 0x02000000 } oifname \"eth1\" counter drop",
+	} {
+		if !strings.Contains(batch.Nft, want) {
+			t.Errorf("Direct ruleset is missing %q", want)
+		}
+	}
+	if update := StaticSetsBatch(direct); !strings.Contains(update, "flush chain inet flr routing_mode\nadd rule inet flr routing_mode goto route_direct\nflush chain inet flr routing_guards\n") {
+		t.Error("live switch to Direct does not turn off policy routing and guards together")
+	}
+	if update := StaticSetsBatch(p); !strings.Contains(update, "add rule inet flr routing_mode goto classify\nflush chain inet flr routing_guards\nadd rule inet flr routing_guards jump policy_guards\n") {
+		t.Error("live switch to a VPN policy does not restore policy routing and guards together")
+	}
+	guard, err := BuildBootGuard(p, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(guard, "meta nfproto ipv6 ct mark & 0xff800000 != 0x43000000 counter drop") {
+		t.Error("boot guard blocks IPv6 flows that began in Direct mode")
+	}
+}
+
+func TestRoutingModeUpdatesDNSInterception(t *testing.T) {
+	p := mustPolicy(t)
+	o := Options{LAN: "lan0", WAN: "wan0", TestClient: "10.240.5.20", DNSPort: "1054", Selection: contract.Selection{General: contract.Down, Games: contract.Down}}
+	redirect := `iifname "lan0" ip saddr 10.240.5.20 meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 redirect to :1054`
+	for _, mode := range []string{policy.ModeDirect, policy.ModeProxy, policy.ModeTunnel} {
+		t.Run(mode, func(t *testing.T) {
+			view := p.ForMode(mode)
+			initial, err := Build(view, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transition, err := RoutingPolicyBatch(view, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := "flush chain inet flr dns\n"
+			dnsChain := "chain dns { type nat hook prerouting priority -100; policy accept;\n"
+			if mode != policy.ModeDirect {
+				expected += "add rule inet flr dns " + redirect + "\n"
+				dnsChain += "  " + redirect + "\n"
+			}
+			if !strings.Contains(initial.Nft, dnsChain+" }") {
+				t.Error("incorrect DNS chain in the initial ruleset")
+			}
+			if !strings.HasSuffix(transition, expected) {
+				t.Error("incorrect DNS change in the mode transaction")
+			}
+		})
+	}
+}
+
+func TestRoutingModePublishesActiveDeviceProfiles(t *testing.T) {
+	p := mustPolicy(t).ForMode(policy.ModeProxy)
+	o := Options{
+		LAN: "br-lan", WAN: "eth1", Selection: contract.Selection{General: contract.Down, Games: contract.Down},
+		Net:      lan.LAN{Addr: netip.MustParseAddr("10.240.5.1"), Prefix: netip.MustParsePrefix("10.240.5.0/24")},
+		Profiles: map[string]contract.Class{"10.240.5.20": contract.Games, "10.240.6.20": contract.General},
+	}
+	batch, err := RoutingPolicyBatch(p, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(batch, "flush set inet flr profile_games4\nadd element inet flr profile_games4 { 10.240.5.20 }\n") ||
+		!strings.Contains(batch, "flush set inet flr profile_general4\n") ||
+		strings.Contains(batch, "10.240.6.20") || strings.Contains(batch, "profile_pending4") {
+		t.Fatal("policy transaction did not replace only the current LAN's active profiles")
+	}
+}
+
+func TestPrepareRoutingBootGuardRefreshesOwnedInclude(t *testing.T) {
+	p := mustPolicy(t).ForMode(policy.ModeDirect)
+	o := Options{LAN: "br-lan", WAN: "eth1", Selection: contract.Selection{General: contract.Down, Games: contract.Down}}
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "boot-guard.nft")
+	if result, err := prepareRoutingBootGuard(path, p, o); result != "" || err != nil {
+		t.Fatalf("absent guard: %q, %v", result, err)
+	}
+	foreign := "table inet flr_boot {}\n"
+	if err := os.WriteFile(path, []byte(foreign), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := prepareRoutingBootGuard(path, p, o); result != "" || err != nil {
+		t.Fatalf("foreign guard: %q, %v", result, err)
+	}
+	if raw, err := os.ReadFile(path); string(raw) != foreign || err != nil {
+		t.Fatal("foreign guard was changed", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("# tracegate-flr-v1\nold guard\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := prepareRoutingBootGuard(path, p, o)
+	if err != nil || !strings.Contains(result, "meta nfproto ipv6 ct mark & 0xff800000 != 0x43000000 counter drop") {
+		t.Fatalf("owned guard was not prepared for the nft transaction: %q, %v", result, err)
+	}
+	if raw, err := os.ReadFile(path); string(raw) != result || err != nil {
+		t.Fatal("firewall include was not updated", err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry, err := prepareRoutingBootGuard(path, p, o); retry != result || err != nil {
+		t.Fatal("retry cannot refresh the live guard", err)
+	}
+	if after, err := os.Stat(path); err != nil || !os.SameFile(before, after) {
+		t.Fatal("retry rewrote an unchanged include", err)
+	}
+}
+
+func TestCheckBootOwnershipRejectsUnverifiedLiveTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "boot-guard.nft")
+	listError := errors.New("cannot list tables")
+	failed := func(string, ...string) ([]byte, error) { return nil, listError }
+	if err := checkBootOwnership(path, failed); !errors.Is(err, listError) {
+		t.Fatal("failed table listing was treated as an absent guard", err)
+	}
+	present := func(string, ...string) ([]byte, error) { return []byte("table inet flr_boot\n"), nil }
+	if err := checkBootOwnership(path, present); err == nil {
+		t.Fatal("live guard without an include was treated as owned")
+	}
+	if err := os.WriteFile(path, []byte("foreign guard\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkBootOwnership(path, present); err == nil {
+		t.Fatal("live guard with a foreign include was treated as owned")
+	}
+	if err := os.WriteFile(path, []byte("# tracegate-flr-v1\nold guard\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkBootOwnership(path, present); err != nil {
+		t.Fatal("existing owned guard was rejected", err)
+	}
+}
 
 func TestStaticSetsBatchFollowsRoutingMode(t *testing.T) {
 	p, e := policy.Load("../policy/testdata/split")

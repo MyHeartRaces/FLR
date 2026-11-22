@@ -1183,17 +1183,17 @@ msgstr "регулярное выражение"
 msgid "address / subnet"
 msgstr "адрес / подсеть"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:20
-msgid "Active policy"
-msgstr "Действующая политика"
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:54
+msgid "Installed policy"
+msgstr "Установленная политика"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:21
-msgid "The private overlay from /etc/flr-runtime/policy is in use."
-msgstr "Используется частная политика из /etc/flr-runtime/policy."
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:55
+msgid "The private overlay from /etc/flr-runtime/policy is installed."
+msgstr "Установлена частная политика из /etc/flr-runtime/policy."
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:21
-msgid "The image default is in use: everything except local destinations goes through the VPN."
-msgstr "Используется политика образа по умолчанию: всё, кроме локальных назначений, идёт через VPN."
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:55
+msgid "The image policy is installed."
+msgstr "Установлена политика образа."
 
 #: htdocs/luci-static/resources/view/flr/routing/overview.js:22
 msgid "policy.json: status %s · version %s"
@@ -1215,9 +1215,13 @@ msgstr "Контроллер не запущен; изменения вступ�
 msgid "The VPN is not running; changes apply when it starts."
 msgstr "VPN не запущен; изменения вступят в силу при его запуске."
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:26
-msgid "Applied live in mode %s."
-msgstr "Применено без перезапуска в режиме %s."
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:36
+msgid "Waiting to apply %s. Active mode: %s."
+msgstr "Ожидает применения: %s. Активный режим: %s."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:36
+msgid "Active routing mode: %s."
+msgstr "Активный режим маршрутизации: %s."
 
 #: htdocs/luci-static/resources/view/flr/routing/overview.js:27
 msgid "Last applied: %s (%s)."
@@ -1227,17 +1231,41 @@ msgstr "Последнее применение: %s (%s)."
 msgid "Custom rules are not in use: %s"
 msgstr "Собственные правила не применяются: %s"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
-msgid "Split: lists from the private policy"
-msgstr "Раздельный: списки из частной политики"
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:22
+msgid "Full proxy with custom exceptions"
+msgstr "Полный прокси с собственными исключениями"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
-msgid "Everything via VPN except essential direct services"
-msgstr "Всё через VPN, кроме обязательных direct-сервисов"
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:22
+msgid "Full proxy"
+msgstr "Полный прокси"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:31
-msgid "Everything via VPN"
-msgstr "Всё через VPN"
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:23
+msgid "Tunnel"
+msgstr "Туннель"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:24
+msgid "Direct"
+msgstr "Напрямую"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:22
+msgid "Default mode. Traffic uses the VPN unless an installed direct list or custom rule routes it through the ISP."
+msgstr "Режим по умолчанию. Трафик идёт через VPN, если установленный список прямой маршрутизации или собственное правило не направляет его через провайдера."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:23
+msgid "Traffic uses the ISP by default. Protected destinations, game platforms, VPN services and custom VPN rules use the VPN. Custom Direct rules are inactive."
+msgstr "Трафик по умолчанию идёт через провайдера. Через VPN идут защищённые назначения, игровые платформы, VPN-сервисы и назначения из собственных правил VPN. Собственные правила прямой маршрутизации отключены."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:24
+msgid "Traffic follows the normal ISP route and uses the router’s usual DNS. Direct bypasses FLR routing rules, device routes and DNS filtering."
+msgstr "Трафик идёт обычным маршрутом через провайдера и использует обычный DNS роутера. Режим «Напрямую» обходит правила маршрутизации FLR, маршруты устройств и фильтрацию DNS."
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:26
+msgid "Tunnel with essential bypasses"
+msgstr "VPN с обязательными исключениями"
+
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:27
+msgid "Strict tunnel"
+msgstr "Строгий режим VPN"
 
 #: htdocs/luci-static/resources/view/flr/routing/overview.js:34
 msgid "Current: %s"
@@ -1247,17 +1275,13 @@ msgstr "Текущий: %s"
 msgid "Routing mode"
 msgstr "Режим маршрутизации"
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:36
-msgid "\"Split\" sends destinations from the private policy directly (without it, only local ones). \"Everything via VPN except essential direct services\" keeps a short list of services that do not work from a foreign address direct. \"Everything via VPN\" keeps only the LAN, the router itself and explicit direct (SOCKS, the \"Direct\" device route) direct."
-msgstr "«Раздельный» отправляет напрямую назначения из частной политики (без неё — только локальные). «Всё через VPN, кроме обязательных direct-сервисов» оставляет напрямую короткий список сервисов, которые не работают с зарубежного адреса. «Всё через VPN» оставляет напрямую только LAN, сам роутер и явный direct (SOCKS, маршрут устройства «Direct»)."
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:76
+msgid "Mode changes apply to new connections. Existing connections keep their routes. Local destinations stay on the LAN."
+msgstr "Смена режима действует для новых соединений. Действующие соединения сохраняют свои маршруты. Локальные назначения остаются в LAN."
 
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:37
-msgid "Custom \"direct\" rules apply in the first two modes; custom \"VPN\" rules apply in all of them."
-msgstr "Собственные правила «напрямую» действуют в первых двух режимах; правила «через VPN» — во всех."
-
-#: htdocs/luci-static/resources/view/flr/routing/overview.js:38
-msgid "The full modes increase traffic to the server, add latency for domestic sites and show them the server address."
-msgstr "Полные режимы увеличивают объём трафика к серверу, добавляют задержку для внутренних сайтов и показывают им адрес сервера."
+#: htdocs/luci-static/resources/view/flr/routing/overview.js:74
+msgid "Choose the VPN connection in Proxy"
+msgstr "Выбрать подключение VPN в разделе «Прокси»"
 
 #: htdocs/luci-static/resources/view/flr/routing/overview.js:40
 msgid "Save routing mode"
@@ -1471,9 +1495,9 @@ msgstr "правило выключено"
 msgid "Local destinations cover this rule; there they always stay local."
 msgstr "Это правило перекрывается локальными назначениями; они всегда остаются локальными."
 
-#: htdocs/luci-static/resources/view/flr/routing/rules.js:50
-msgid "Ignored in the current routing mode \"Everything via VPN\"."
-msgstr "Не действует в текущем режиме маршрутизации «Всё через VPN»."
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:54
+msgid "Direct rules are inactive in this mode."
+msgstr "Собственные правила прямой маршрутизации выключены в этом режиме."
 
 #: htdocs/luci-static/resources/view/flr/routing/rules.js:57
 msgid "Disable"
@@ -1527,13 +1551,21 @@ msgstr "Правила %s–%s из %s найденных (всего %s)."
 msgid "The stored rules file is not in use: %s"
 msgstr "Сохранённый файл правил не применяется: %s"
 
-#: htdocs/luci-static/resources/view/flr/routing/rules.js:74
-msgid "A custom rule sends a domain (with its subdomains), an IPv4 address, subnet or range either through the VPN or directly through the ISP. Custom rules take precedence over the lists of the routing policy; only local destinations always stay local. The most specific rule wins; for the same destination the VPN wins."
-msgstr "Собственное правило направляет домен (с поддоменами), IPv4-адрес, подсеть или диапазон либо через VPN, либо напрямую через провайдера. Собственные правила важнее списков политики маршрутизации; только локальные назначения всегда остаются локальными. Побеждает самое точное правило; при совпадении — VPN."
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:78
+msgid "A custom rule matches a domain and its subdomains, an IPv4 address, subnet or range. The most specific active rule wins. When two active rules match the same destination equally, the VPN rule wins. Local destinations stay on the LAN."
+msgstr "Собственное правило охватывает домен с поддоменами, IPv4-адрес, подсеть или диапазон адресов. Приоритет у самого точного действующего правила. При одинаковой точности приоритет у правила VPN. Локальные назначения остаются в LAN."
 
-#: htdocs/luci-static/resources/view/flr/routing/rules.js:75
-msgid "\"Direct\" rules apply in the routing modes \"Split\" and \"Everything via VPN except essential direct services\" and are ignored in \"Everything via VPN\"; \"VPN\" rules always apply. A change applies to new connections at once, without restarting the VPN; existing connections keep their route. IPv6 is not supported. The rules are stored on the router only."
-msgstr "Правила «напрямую» действуют в режимах «Раздельный» и «Всё через VPN, кроме обязательных direct-сервисов» и не действуют в режиме «Всё через VPN»; правила «через VPN» действуют всегда. Изменение сразу применяется к новым соединениям без перезапуска VPN; существующие соединения сохраняют свой маршрут. IPv6 не поддерживается. Правила хранятся только на роутере."
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:79
+msgid "Full proxy applies both VPN and direct rules. Tunnel applies VPN rules. Changes to active rules apply to new connections. Rules are stored on the router."
+msgstr "В режиме «Полный прокси» действуют как правила VPN, так и правила прямой маршрутизации. В режиме «Туннель» действуют правила VPN. Изменения действующих правил применяются к новым соединениям. Правила хранятся на роутере."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:80
+msgid "Direct mode bypasses custom rules. You can edit saved rules for the other modes."
+msgstr "Режим «Напрямую» обходит собственные правила. Сохранённые правила можно редактировать для других режимов."
+
+#: htdocs/luci-static/resources/view/flr/routing/rules.js:24
+msgid "Rules saved. Direct mode bypasses them."
+msgstr "Правила сохранены. Режим «Напрямую» обходит их."
 
 #: htdocs/luci-static/resources/view/flr/routing/rules.js:77
 msgid "Rules"
@@ -1623,9 +1655,9 @@ msgstr "Перечитать и применить"
 msgid "Image default and backup"
 msgstr "Политика образа и резервная копия"
 
-#: htdocs/luci-static/resources/view/flr/routing/transfer.js:52
-msgid "\"Reset to image default\" moves the private overlay to the backup: everything except local destinations then goes through the VPN; custom rules stay. \"Restore backup\" brings the saved overlay back and keeps the current one as the backup."
-msgstr "«Сбросить к политике образа» переносит частную политику в резервную копию: после этого всё, кроме локальных назначений, идёт через VPN; собственные правила остаются. «Восстановить резервную копию» возвращает сохранённую частную политику, а текущую сохраняет как резервную копию."
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:139
+msgid "\"Reset to image default\" backs up the private overlay and loads the image policy. Both actions keep the selected routing mode and saved Custom rules. \"Restore backup\" brings the saved overlay back and keeps the current one as the backup."
+msgstr "«Сбросить к политике образа» сохраняет частную политику в резервной копии и загружает политику образа. Обе операции сохраняют выбранный режим и собственные правила. «Восстановить резервную копию» возвращает сохранённую частную политику и убирает текущую в резервную копию."
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:55
 msgid "Reset to image default"
@@ -2038,9 +2070,9 @@ msgstr "Профиль Default"
 msgid "RoscomVPN routing profile"
 msgstr "Профиль маршрутизации RoscomVPN"
 
-#: htdocs/luci-static/resources/view/flr/routing/transfer.js:87
-msgid "Converts a RoscomVPN routing profile (Happ or INCY JSON, or its routing link) into the private policy overlay: DirectSites and DirectIp become the broad direct lists, ProxySites and ProxyIp always go through the VPN, private destinations stay local, everything else keeps going through the VPN. Blocking, DNS and fake-DNS settings of the profile are not applied. Custom rules stay as they are."
-msgstr "Преобразует профиль маршрутизации RoscomVPN (JSON для Happ или INCY либо его ссылку routing) в частную политику: DirectSites и DirectIp становятся широкими списками напрямую, ProxySites и ProxyIp всегда идут через VPN, частные назначения остаются локальными, всё остальное по-прежнему идёт через VPN. Блокировки, DNS и fake-DNS из профиля не применяются. Собственные правила не меняются."
+#: htdocs/luci-static/resources/view/flr/routing/transfer.js:120
+msgid "Converts a RoscomVPN routing profile (Happ or INCY JSON, or its routing link) into the private policy overlay. DirectSites and DirectIp become direct lists for Full proxy. ProxySites and ProxyIp become VPN rules for Full proxy and Tunnel. Private destinations stay local in every mode. The import keeps your custom rules. FLR uses its own DNS and routing settings."
+msgstr "Преобразует профиль маршрутизации RoscomVPN (JSON Happ или INCY либо ссылку маршрутизации) в частную политику. DirectSites и DirectIp становятся списками прямой маршрутизации для режима «Полный прокси». ProxySites и ProxyIp становятся правилами VPN для режимов «Полный прокси» и «Туннель». Частные назначения остаются локальными в любом режиме. Импорт сохраняет ваши собственные правила. FLR использует свои настройки DNS и маршрутизации."
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:88
 msgid "The router downloads the profile and the geosite and geoip files it names: through the VPN while the VPN runs, otherwise through the ISP. Preview shows the result without changing anything; Import replaces the current routing policy and keeps the previous one as the backup."
@@ -2131,8 +2163,8 @@ msgid "invalid characters in domain"
 msgstr "недопустимые символы в домене"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:71
-msgid "FLR does not block destinations; they follow the other lists (unlisted: VPN)"
-msgstr "FLR не блокирует назначения: они следуют остальным спискам (не указанные — через VPN)"
+msgid "FLR routes these destinations using the other lists and the selected mode"
+msgstr "FLR маршрутизирует эти назначения по остальным спискам и выбранному режиму"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:72
 msgid "FLR resolves every name through its own DNS broker; static host entries are not imported"
@@ -2155,8 +2187,8 @@ msgid "FLR always gives the VPN lists precedence over the direct lists (block-pr
 msgstr "у FLR списки VPN всегда важнее списков напрямую (block-proxy-direct)"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:77
-msgid "FLR still sends unlisted destinations through the VPN"
-msgstr "FLR по-прежнему отправляет назначения вне списков через VPN"
+msgid "FLR keeps the selected routing mode. Choose Tunnel to send unlisted destinations through the ISP while retaining VPN rules"
+msgstr "FLR сохраняет выбранный режим маршрутизации. Выберите «Туннель», чтобы отправлять назначения вне списков через провайдера и сохранить действие правил VPN"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:78
 msgid "%s bare entries were imported as substring (keyword) matches, as Xray matches them; write domain:example.com for a domain and its subdomains"
@@ -2167,8 +2199,8 @@ msgid "an address in ProxyIp goes through the VPN even when its name is in Direc
 msgstr "адрес из ProxyIp идёт через VPN, даже если его имя есть в DirectSites (FLR сверяет наборы адресов раньше наборов напрямую, полученных из имён)"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:80
-msgid "DirectSites and DirectIp apply in routing mode split only; full_domestic and full ignore them"
-msgstr "DirectSites и DirectIp действуют только в режиме маршрутизации split; full_domestic и full их не используют"
+msgid "DirectSites and DirectIp take effect in Full proxy (split)"
+msgstr "DirectSites и DirectIp действуют в режиме «Полный прокси» (split)"
 
 #: htdocs/luci-static/resources/view/flr/routing/transfer.js:81
 msgid "%s repeated category references were expanded once"

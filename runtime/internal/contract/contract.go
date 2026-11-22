@@ -3,6 +3,8 @@ package contract
 type Class string
 type Channel string
 
+const RuntimeVersion = "0.8-runtime"
+
 const (
 	Local       Class   = "local"
 	Direct      Class   = "direct"
@@ -12,12 +14,15 @@ const (
 	AWG         Channel = "awg"
 	Gecko       Channel = "gecko"
 	VLESS       Channel = "vless"
+	Continuity  Channel = "continuity"
 	ClassMask   uint32  = 0x0f000000
 	ChannelMask uint32  = 0x70000000
 	OuterMark   uint32  = 0x80000000
 	ProbeMark   uint32  = 0x00800000
 	OwnedMask   uint32  = 0xff800000
 )
+
+const ContinuityDevice = "flr_cont"
 
 type Selection struct {
 	General Channel `json:"general"`
@@ -43,6 +48,8 @@ func ChannelMark(c Channel) uint32 {
 		return 0x20000000
 	case VLESS:
 		return 0x30000000
+	case Continuity:
+		return 0x50000000
 	}
 	return 0
 }
@@ -54,6 +61,8 @@ func Table(c Channel) int {
 		return 771
 	case VLESS:
 		return 772
+	case Continuity:
+		return 774
 	}
 	return 0
 }

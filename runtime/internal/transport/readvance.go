@@ -64,12 +64,17 @@ func (m *Manager) readvanceAWG(ctx context.Context, now time.Time, candidates []
 		if c.Family != "awg" || key == configured || now.Before(m.retries[key].after) {
 			continue
 		}
-		if err := m.cleanupChannel(contract.AWG, "native_replacement"); err != nil {
+		attempt := beginAttempt(&c, connectionIdentity(s.active), generation, "failback")
+		defer m.finishAttempt(ctx, attempt)
+		start := time.Now()
+		err := m.cleanupChannel(contract.AWG, "native_replacement")
+		attempt.Retirement = operationStage(start, err)
+		if err != nil {
 			// The proxy stays the default; the attempt is repeated next round.
 			m.state.LastError = "native cleanup failed"
 			return
 		}
-		err := s.awg.Switch(ctx, c)
+		err = switchCandidateAWG(ctx, s.awg, c, attempt)
 		m.recordOperation("native_replacement", "native", contract.AWG, &c, err)
 		m.resetRoam()
 		if err != nil {
@@ -89,16 +94,21 @@ func (m *Manager) readvanceAWG(ctx context.Context, now time.Time, candidates []
 			// Measured next round: the native identity is monitored beside the slot.
 			return
 		}
-		state := m.nativeProbe(ctx, now, c)
+		state := m.nativeProbe(ctx, now, c, true, attempt)
 		if m.requestedGeneration.Load() != generation || state.Last.NotMeasured != "" {
+			if state.Last.NotMeasured != "" {
+				attempt.Outcome = state.Last.NotMeasured
+			}
 			return
 		}
 		if state.Healthy() && state.Last.TCP && state.Last.UDP {
-			m.selectConnection(c, state, generation)
+			m.selectConnection(c, state, generation, attempt)
 			return
 		}
 		if !state.Last.TCP || !state.Last.UDP {
 			m.cool(key, now)
+		} else {
+			attempt.Outcome = "recovering"
 		}
 		return
 	}

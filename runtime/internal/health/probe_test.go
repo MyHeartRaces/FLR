@@ -23,6 +23,10 @@ func TestProbeAggregatesIndependentTargetsAndKeepsProtocolTiming(t *testing.T) {
 	if r.Targets[0].TCPDurationMS != 0 || r.Targets[1].UDPDurationMS != 0 {
 		t.Fatal("failure published success timing")
 	}
+	if r.Targets[0].TCPObservation.Outcome != "failed" || r.Targets[1].UDPObservation.Outcome != "failed" ||
+		r.Targets[1].TCPObservation.Outcome != "ok" || r.Targets[1].TCPObservation.DurationMS != 120 {
+		t.Fatalf("diagnostic probe observations were lost: %+v", r.Targets)
+	}
 	if len(calls) != 4 {
 		t.Fatal("not exactly two providers/protocol")
 	}
@@ -30,7 +34,7 @@ func TestProbeAggregatesIndependentTargetsAndKeepsProtocolTiming(t *testing.T) {
 		<-calls
 	}
 	r = probeTargets(context.Background(), false, tcp, func(context.Context, probeTarget) (bool, int64) { t.Error("TCP-only probed UDP"); return false, 0 })
-	if !r.TCP || r.UDP {
+	if !r.TCP || r.UDP || r.Targets[0].UDPObservation.Outcome != "" {
 		t.Fatal("capability result", r)
 	}
 }
@@ -54,7 +58,7 @@ func TestProbeUsesSharedDeadlineAndFixedIndependentSockets(t *testing.T) {
 		return false, 0
 	}
 	r := probeTargets(ctx, true, f, f)
-	if r.TCP || r.UDP {
+	if r.TCP || r.UDP || r.Targets[0].TCPObservation.Outcome != "cancelled" {
 		t.Fatal("cancelled success")
 	}
 	if probeHTTPClient(nil).CheckRedirect(nil, nil) == nil {

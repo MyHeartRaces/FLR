@@ -5,8 +5,8 @@ FLR VPS servers (the main server and any backup server). One Python 3.11+ script
 library only. Replaces the bash prototype.
 
 It updates the Hysteria2 server binary to the latest compatible stable
-release, keeps the last known good version, and permanently blocks a version
-that breaks the home router's connection. It also reports, read-only, whether
+release, keeps the last known good version, and blocks proven compatibility
+regressions. It also reports, read-only, whether
 the AmneziaWG DKMS module exists for the kernel the server will boot next.
 
 It never runs apt or dpkg, never reboots, never touches the firewall or the
@@ -21,63 +21,103 @@ port-hopping nftables table, and never prints the stats secret.
 | `flr-engine-update.service`, `.timer` | hardened oneshot, every 2 h (+0-20 min random) |
 | `tests/test_engine_update.py` | offline unit tests |
 
-## What one cycle does
+## Qualification and promotion
 
-1. Bootstrap: if the lock is new, read the installed version from
-   `<binary> version` and record it as current and last good.
-2. If a previous promotion is still `verifying`, evaluate it first (this runs
-   even under `hold`, because it finishes work already done).
-3. Pick the newest non-draft, non-prerelease release that is older than
-   `soak_days`, newer than current, and not blocked. (`hold` stops here.)
-4. Verify before installing: sha256 from `hashes.txt` (basename match), the
-   API `digest` when present, ELF magic and `e_machine`, `<bin> version`
-   reports the tag, download at most 64 MiB. Any failure aborts the cycle,
-   changes nothing and is retried next run (exit 3). It does not block.
-5. Canary: run the candidate as a second process with a temp copy of the
-   production config whose top-level `listen:` is set to `canary_port`
-   (and whose `trafficStats:` block is dropped so it cannot grab the stats
-   port). Wait up to `canary_timeout_s` for `ready_pattern`. If it fails, the
-   same canary is run with the CURRENT binary as a control. Control passes:
-   the candidate is blocked. Control also fails: the environment is at fault
-   (port in use, sandbox, certificate), so the result is `inconclusive`, the
-   version is not blocked and is retried next run. The production instance and
-   firewall are untouched.
-6. Idle gate (`promote_when: "idle"`): the router user must be online and
-   quiet. `/online` must show `router_user` >= 1 (the warm reserve session)
-   and its tx+rx growth over `idle_window_s` (default 120; two `/traffic`
-   samples, waiting inline) must be at most `idle_max_bytes` (default 262144).
-   Real failover traffic moves far more. Router offline (online 0), busy, stats
-   API unreachable, or no stats API configured all DEFER (stage `ready`, retried
-   next run). The measured bytes and decision (`idle`, `busy`, `offline`,
-   `unavailable`, `unconfigured`) are stored in `candidate.idle_check` and shown
-   by `status`; with no stats API `status` adds `promotion_note`. Apply mode
-   therefore effectively needs the stats API unless `promote_when` is `"any"`,
-   the explicit override that skips the check (and records `service-only`
-   evidence when stats are absent).
-7. Promote: keep `<binary>.last-good-<ver>`, atomic install, `systemctl
-   restart <unit>`, wait `restart_wait_s`, require `is-active` and the ready
-   line in `journalctl -u <unit> --since <restart time>`. Failure restores the
-   last-good binary, restarts and blocks the candidate.
-8. Router verification: record the router user's `/traffic` tx/rx right after
-   restart. Within `verify_window_minutes` the version passes when both tx and
-   rx grow by at least `verify_min_bytes` (default 4096; probes are tens of KB
-   per window), OR when `verify_consecutive_polls` (3) consecutive polls show
-   the router online with growth in both directions. With `verify_inline`
-   (default) the run polls every 30 s; otherwise later runs evaluate it
-   (progress is kept in `candidate.progress`; growth is checked before expiry).
-   At expiry:
-   - router was online (or moved bytes) but not enough traffic: restore last
-     good, restart, BLOCK ("no router traffic within window");
-   - router never connected (online stayed 0, no growth): INCONCLUSIVE. Restore
-     last good and restart but do not block; reason "inconclusive: router not
-     connected" goes to `last_attempt`; the version is eligible again next run;
-   - stats API unreachable throughout: keep the version on `service-only`
-     evidence.
-   If the restored last-good binary also fails to start, the candidate is not
-   blocked and the result is `environment-failure`.
+Check mode reports eligible upstream versions without staging or qualifying
+them. Apply mode keeps the production service running while it downloads an
+eligible stable release and verifies the asset checksum, digest when supplied,
+ELF architecture and version. The default release soak is three days.
 
-Compatibility evidence relies on the router keeping the Hysteria2 reserve
-"warm" so a compatible server sees authenticated router traffic within minutes.
+Apply mode requires the qualification config below, explicit restart
+permission and authenticated loopback production stats. With
+`promote_when: "idle"`, the updater measures production traffic for the
+configured router user first. The router must be online and its total traffic
+growth must stay within `idle_max_bytes` (default 256 KiB over two minutes).
+Busy, offline or unavailable production stats defer promotion. The
+`promote_when: "any"` setting skips the idle measurement.
+
+The updater starts a candidate Hysteria process from a private copy of the
+production configuration with a separate UDP bind and authenticated loopback
+stats port. It verifies both sockets belong to the candidate process and asks
+the router to transfer at least 8 MiB over HTTPS within 60 seconds and receive
+at least three UDP DNS answers through that listener. The candidate's
+dedicated counters for the router user must grow in both directions and show
+at least 8 MiB of growth in one direction. A failing candidate only
+enters the compatibility block list if the current version qualifies on the
+same staging endpoint and the candidate fails again. Missing or stale
+receipts, configuration changes, and shared failures are inconclusive.
+
+A passed canary authorizes a single maintenance restart within its receipt
+window. Idle mode checks production traffic growth during qualification
+before replacement and again before restart. The updater records the installing
+stage, saves the last-good binary, and atomically replaces the production
+binary. An expired receipt stops the restart. It verifies the
+restarted process and its production listeners, repeats the same router
+probes against the final endpoint, and checks production counters. The
+existing warm-reserve traffic check then observes continued traffic for the
+router user. Decreasing counters start a new measurement baseline. A missing
+final receipt, changed listener, changed binary, unavailable stats or missing
+warm traffic restores last good and leaves the release eligible to retry.
+A service startup failure blocks the release when the restored service is
+healthy. An interrupted install reconciles the recorded last-good process and
+binary. If the original process still owns the production listeners, the
+updater restores the binary on disk without interrupting that process.
+
+### Private qualification configuration
+
+Leave `qualification` as `null` to keep check-only operation. The following
+example belongs inside `engines.hysteria` in the server's private config.
+
+```json
+{
+  "command": ["/usr/local/libexec/flr-qualify-router"],
+  "router_build": "1111111111111111111111111111111111111111",
+  "profile_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+  "relay_id": "relay-example",
+  "address": "203.0.113.10",
+  "bind_address": "192.0.2.10",
+  "stats_port": 25414,
+  "production_port": 443,
+  "allow_restart": false
+}
+```
+
+- `command` is an absolute executable and argument vector. Use a trusted
+  local bridge to the router's authenticated management channel, such as
+  existing pinned-host SSH with runner credentials readable by the service.
+  Command output is limited to one receipt and the invocation to 100 seconds.
+- The bridge can forward stdin and stdout to the router command
+  `/usr/sbin/flr-controller engine qualify-relay <connection-id> <relay-id> <candidate-port>`.
+  Fix these arguments in the trusted bridge. Use the build's 40-character
+  Git revision and the fixed-port saved connection's 64-character revision
+  for `router_build` and `profile_revision`.
+- `address` is the router-visible IPv4 address. `bind_address` is the
+  corresponding explicit local IPv4 interface address. Both the configured
+  `production_port` and the existing `canary_port` are UDP ports. The
+  production port must match the actual serving socket. The candidate port
+  needs an existing, scoped firewall rule that allows the qualifying router.
+- `stats_port` is a free loopback TCP port separate from production
+  `stats_url`. Production stats must be on `http://127.0.0.1:<port>` and
+  use the configured secret file. The candidate stats secret is generated
+  per process. Both sets of counters are keyed by the configured router
+  auth user.
+- `allow_restart` permits the same-endpoint maintenance restart after the
+  gates pass. Set it for a window when a restart can safely drop sessions.
+- The production YAML must use block-style top-level keys, a static readable
+  tunnel certificate and key, and no extra masquerade HTTP(S) listeners.
+  Keep certificate paths absolute and the cover site independently serving.
+
+The command receives a JSON object on stdin with `format`
+(`flr-relay-attempt-v1`), `nonce`, `router_build`, `candidate_sha256`,
+`profile_revision`, `relay_id`, `listener` (`candidate` or `production`),
+`address`, `port` and `expires_at` (UTC RFC 3339). The trusted router
+bridge validates the router build, private profile digest or revision, the
+relay and port allowlist, and expiry before probing. On stdout it returns
+`{"attempt": ..., "outcome": ..., "https_bytes": ..., "https_ms": ..., "udp_answers": ...}`.
+`attempt` must exactly echo the input. Use `passed`, `failed`, or
+`inconclusive` for `outcome`. A receipt is scoped to a single invocation.
+The router's candidate profile retains the production TLS, obfuscation and
+protocol options for the intended test, and binds the bearer to the WAN.
 
 ## Lock file
 
@@ -90,18 +130,19 @@ fsync, rename). Format `flr-compat-lock-v1`; under `engines.hysteria`:
   equals `current`. Copies are kept as `<binary>.last-good-<ver>` (only the
   versions the lock references are kept).
 - `candidate`: `null`, or `{version, sha256, stage, started_at, baseline}`.
-  Stages: `ready` (verified and canaried, waiting for idle), `installing`
+  Stages: `ready` (binary verified, waiting for idle and qualification), `installing`
   (crash marker; the next run restores last good without blocking),
   `verifying` (installed, waiting for router traffic; `baseline` holds the
-  tx/rx counters, `progress` the poll state). `idle_check` records the last
-  idle decision.
+  tx/rx counters, `progress` the poll state). `qualification` holds the
+  matched attempts and production socket ownership during the promotion.
+  `idle_check` records the last idle decision.
 - `last_attempt`: `null` or `{version, result, reason, at}` of the last failed
   attempt (`blocked`, `rolled-back`, `inconclusive`, `environment-failure`).
 - `blocked`: `[{version, sha256, reason, at}]`. A blocked version is never
   retried; newer versions stay eligible. Clear with `unblock`.
 - `hold`: freezes the engine (no new installs).
-- `evidence`: how the current version was accepted, `router-traffic` or
-  `service-only` (no stats API configured, or it was unreachable).
+- `evidence`: `router-traffic` for a verified promotion. Older state or
+  the initial installed binary can have `service-only` evidence.
 
 Concurrent runs are excluded with `flock` on `lock.json.flock` (exit 5).
 
@@ -166,8 +207,8 @@ sudo flr-engine-update check                  # dry run against GitHub
 sudo flr-engine-update gate
 ```
 
-Enable only when satisfied. Start in `"mode": "check"`; switch to `"apply"`
-when you want updates installed:
+Enable in `"mode": "check"` for unattended reports. To promote an update,
+configure the paired gate and enable `"apply"` for an approved window.
 
 ```sh
 sudo systemctl enable --now flr-engine-update.timer
@@ -185,11 +226,10 @@ its unit, binary and config path; nothing is hardcoded to a host.
   probes exceed 256 KiB per window. An offline router never promotes.
 - A restart drops Hysteria sessions. Games run on AWG, so this is acceptable
   only while AWG is primary; the idle gate exists to protect other users.
-- The canary config edit is textual: it needs exactly one top-level
-  `listen:` line and does not rewrite other listeners (for example
-  `masquerade.listenHTTP`).
+- The canary config edit is textual and requires exactly one top-level
+  `listen:` key. The staged process uses the same Hysteria protocol and TLS
+  configuration, with separate UDP and stats sockets.
 - The service needs root for `systemctl restart`; hardening limits writes to
   `/var/lib/flr-engine` and `/usr/local/bin`. The canary child inherits this
   sandbox: the unit allows `AF_UNIX AF_INET AF_INET6 AF_NETLINK`, TLS cert/key
-  and `server.yaml` must be readable outside `/home`, and an `acme:` storage
-  directory in the YAML must be added to `ReadWritePaths`.
+  and `server.yaml` must be readable outside `/home`.
