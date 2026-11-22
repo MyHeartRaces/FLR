@@ -85,6 +85,9 @@ with socket.socket(socket.AF_INET,kind) as s:
   sys.exit(0)
  except OSError as e:
   if e.errno in (errno.ENETUNREACH,errno.EHOSTUNREACH):sys.exit(0)
+  # A Linux OUTPUT drop can return EPERM directly to a local UDP sender.
+  # The caller separately requires the output guard counter to increase.
+  if mark and protocol=='udp' and e.errno==errno.EPERM:sys.exit(0)
   raise
  raise RuntimeError('blocked connection reached an endpoint')
 '''
@@ -249,13 +252,16 @@ def qualify(renderer, policy, output):
             result = json.loads(line(peer))
             if result != {'paths': [expected, expected]}:
                 raise ValueError(f'TCP/UDP path continuity failed for {command}: {result!r}')
-        def blocked(source, target, key='c', mark=None):
+        def blocked(source, target, key='c', mark=None, counter=None):
             for protocol in ['tcp', 'udp']:
+                before = counter() if counter is not None else None
                 try:
                     flags = [hex(mark)] if mark is not None else []
                     ns(key, 'python3', '-c', BLOCKED, protocol, source, target, *flags)
                 except subprocess.CalledProcessError as error:
                     raise ValueError(f'expected {protocol} blocking for {target}: {error.stderr.strip()}') from error
+                if counter is not None and counter() <= before:
+                    raise ValueError(f'continuity guard did not record a {protocol} drop')
         def resources():
             return {'proxy_pid': servers['p'].pid,
                     'link': json.loads(ns('r', 'ip', '-j', 'link', 'show', 'dev', 'flr-hy')),
@@ -341,8 +347,8 @@ def qualify(renderer, policy, output):
         ns('r', 'ip', 'route', 'add', 'default', 'via', '10.99.0.2', 'dev', 'eth1', 'table', '774', 'metric', '50')
         forward_before = drop_count(anchored=True)
         output_before = drop_count('output_guard', anchored=True)
-        blocked(ANCHOR_CLIENT, UNMATCHED)
-        blocked(ANCHOR_SOURCE, UNMATCHED, 'r', 0x51000000)
+        blocked(ANCHOR_CLIENT, UNMATCHED, counter=lambda: drop_count(anchored=True))
+        blocked(ANCHOR_SOURCE, UNMATCHED, 'r', 0x51000000, counter=lambda: drop_count('output_guard', anchored=True))
         anchor_forward_drops = drop_count(anchored=True) - forward_before
         anchor_output_drops = drop_count('output_guard', anchored=True) - output_before
         if min(anchor_forward_drops, anchor_output_drops) < 2:

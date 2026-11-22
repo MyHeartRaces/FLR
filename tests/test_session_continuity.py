@@ -1,4 +1,5 @@
 import importlib.util
+import errno
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -27,6 +28,22 @@ class SessionContinuitySafetyTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'missing kernel qualification tool'):
                 module.qualify(Path('/missing-renderer'), Path('/missing-policy'), Path('/missing-output'))
             run.assert_not_called()
+
+    def test_marked_udp_output_denial_is_accepted_only_during_the_probe(self):
+        module = self.module()
+        args = ['probe', 'udp', module.ANCHOR_SOURCE, module.UNMATCHED]
+        with patch('socket.socket') as open_socket, patch('socket.SO_MARK', 36, create=True):
+            sock = open_socket.return_value.__enter__.return_value
+            sock.send.side_effect = PermissionError(errno.EPERM, 'output denied')
+            with patch('sys.argv', args + ['0x51000000']), self.assertRaises(SystemExit) as blocked:
+                exec(module.BLOCKED, {})
+            self.assertEqual(blocked.exception.code, 0)
+            with patch('sys.argv', args), self.assertRaises(PermissionError):
+                exec(module.BLOCKED, {})
+            sock.send.side_effect = None
+            sock.setsockopt.side_effect = PermissionError(errno.EPERM, 'cannot set mark')
+            with patch('sys.argv', args + ['0x51000000']), self.assertRaises(PermissionError):
+                exec(module.BLOCKED, {})
 
     def test_fixture_uses_document_addresses_without_changing_the_image_policy(self):
         module = self.module()
