@@ -30,11 +30,13 @@ func TestRoutingModePassesThroughNativeDNSOnlyForDirect(t *testing.T) {
 		operations []string
 	}{
 		{"rule based", base, tunnel, "", []string{"publish rules"}},
-		{"enter Direct", tunnel, direct, "", []string{"publish direct", "stop broker", "native DNS"}},
-		{"leave Direct", direct, base, "", []string{"local DNS", "start broker", "publish rules"}},
-		{"failed Direct publication", base, direct, "publish direct", []string{"publish direct"}},
-		{"failed native resolver", tunnel, direct, "native DNS", []string{"publish direct", "stop broker", "native DNS", "local DNS", "publish rules", "start broker"}},
-		{"failed return to policy", direct, tunnel, "publish rules", []string{"local DNS", "start broker", "publish rules", "stop broker", "native DNS"}},
+		{"enter Direct", tunnel, direct, "", []string{"guard DNS", "stop broker", "native DNS", "publish direct"}},
+		{"leave Direct", direct, base, "", []string{"guard DNS", "stop broker", "local DNS", "start broker", "publish rules"}},
+		{"failed guard", base, direct, "guard DNS", []string{"guard DNS"}},
+		{"failed Direct publication", base, direct, "publish direct", []string{"guard DNS", "stop broker", "native DNS", "publish direct", "guard DNS", "fence rules", "stop broker", "local DNS", "start broker", "publish rules"}},
+		{"failed native resolver", tunnel, direct, "native DNS", []string{"guard DNS", "stop broker", "native DNS", "stop broker", "local DNS", "start broker", "publish rules"}},
+		{"failed return to policy", direct, tunnel, "publish rules", []string{"guard DNS", "stop broker", "local DNS", "start broker", "publish rules", "guard DNS", "fence direct", "stop broker", "native DNS", "publish direct"}},
+		{"failed broker restart", direct, tunnel, "start broker", []string{"guard DNS", "stop broker", "local DNS", "start broker", "stop broker", "native DNS", "publish direct"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var operations []string
@@ -46,11 +48,16 @@ func TestRoutingModePassesThroughNativeDNSOnlyForDirect(t *testing.T) {
 				return nil
 			}
 			ops := routingModeOps{
-				publish: func(p *policy.Policy) error {
-					if p.Bypass() {
-						return record("publish direct")
+				guardDNS: func() error { return record("guard DNS") },
+				publish: func(p *policy.Policy, keepGuard bool) error {
+					verb, mode := "publish", "rules"
+					if keepGuard {
+						verb = "fence"
 					}
-					return record("publish rules")
+					if p.Bypass() {
+						mode = "direct"
+					}
+					return record(verb + " " + mode)
 				},
 				nativeDNS: func(direct bool) error {
 					if direct {
@@ -61,9 +68,110 @@ func TestRoutingModePassesThroughNativeDNSOnlyForDirect(t *testing.T) {
 				startDNS: func() error { return record("start broker") },
 				stopDNS:  func() { _ = record("stop broker") },
 			}
-			err := ops.apply(tc.from, tc.to)
-			if (err != nil) != (tc.failure != "") || !slices.Equal(operations, tc.operations) {
+			var pending bool
+			err := ops.apply(tc.from, tc.to, &pending)
+			if (err != nil) != (tc.failure != "") || pending != (tc.failure == "guard DNS") || !slices.Equal(operations, tc.operations) {
 				t.Fatalf("apply: %v, operations %v, want %v", err, operations, tc.operations)
+			}
+		})
+	}
+}
+
+func TestRoutingModeKeepsPreviousForwardingWhenDNSRollbackFails(t *testing.T) {
+	base, err := policy.Load("../policy/testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := base.ForMode(policy.ModeDirect)
+	for _, tc := range []struct {
+		name     string
+		from, to *policy.Policy
+		cancel   bool
+	}{
+		{"retry Direct", base, direct, false},
+		{"cancel Direct", base, direct, true},
+		{"retry Tunnel", direct, base, false},
+		{"cancel Tunnel", direct, base, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			active := tc.from
+			guarded, pending, dnsFault := false, false, true
+			ops := routingModeOps{
+				guardDNS: func() error { guarded = true; return nil },
+				publish: func(view *policy.Policy, keepGuard bool) error {
+					if !guarded {
+						t.Fatal("published routing policy without guarding DNS")
+					}
+					active, guarded = view, keepGuard
+					return nil
+				},
+				nativeDNS: func(bool) error {
+					if !guarded || active != tc.from {
+						t.Fatal("DNS changed with its guard absent or the previous forwarding mode retired")
+					}
+					if dnsFault {
+						return os.ErrPermission
+					}
+					return nil
+				},
+				startDNS: func() error { return nil },
+				stopDNS:  func() {},
+			}
+			if err := ops.apply(tc.from, tc.to, &pending); err == nil || !pending || !guarded || active != tc.from {
+				t.Fatalf("failed handoff retired previous forwarding or left DNS unguarded: %v", err)
+			}
+			dnsFault = false
+			want := tc.to
+			if tc.cancel {
+				want = tc.from
+			}
+			if err := ops.apply(tc.from, want, &pending); err != nil || pending || guarded || active != want {
+				t.Fatalf("handoff could not recover: %v", err)
+			}
+		})
+	}
+}
+
+func TestRoutingModeRefencesBeforeDNSRollbackOnUnconfirmedPublish(t *testing.T) {
+	base, err := policy.Load("../policy/testdata/split")
+	if err != nil {
+		t.Fatal(err)
+	}
+	direct := base.ForMode(policy.ModeDirect)
+	for _, tc := range []struct {
+		name         string
+		rollbackFail bool
+	}{{"rollback succeeds", false}, {"guard holds on failed rollback", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			active, guarded, pending := base, false, false
+			rollbackFail := tc.rollbackFail
+			ops := routingModeOps{
+				guardDNS: func() error { guarded = true; return nil },
+				publish: func(view *policy.Policy, keepGuard bool) error {
+					if keepGuard && rollbackFail {
+						return os.ErrPermission
+					}
+					active, guarded = view, keepGuard
+					if view == direct {
+						return os.ErrDeadlineExceeded // command lost its reply after changing nft
+					}
+					return nil
+				},
+				nativeDNS: func(bool) error {
+					if active != base || !guarded {
+						t.Fatal("reconfigured DNS before reasserting the guarded policy")
+					}
+					return nil
+				},
+				startDNS: func() error { return nil },
+				stopDNS:  func() {},
+			}
+			if err := ops.apply(base, direct, &pending); err == nil || pending != rollbackFail || guarded != rollbackFail {
+				t.Fatalf("unexpected result after unconfirmed publish: %v", err)
+			}
+			rollbackFail = false
+			if err := ops.apply(base, base, &pending); err != nil || pending || guarded || active != base {
+				t.Fatalf("could not reconcile previous mode: %v", err)
 			}
 		})
 	}

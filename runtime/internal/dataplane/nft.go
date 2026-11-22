@@ -275,7 +275,8 @@ func Build(p *policy.Policy, o Options) (Batch, error) {
 	}
 	s.WriteString(" }\n")
 	scope := lanIngress(o)
-	fmt.Fprintf(&s, " chain preroute { type filter hook prerouting priority -151; policy accept;\n  %s return\n  %s jump routing_mode\n }\n", directAffinity, scope)
+	s.WriteString(" chain dns_handoff {\n }\n")
+	fmt.Fprintf(&s, " chain preroute { type filter hook prerouting priority -151; policy accept;\n  iifname %q jump dns_handoff\n  %s return\n  %s jump routing_mode\n }\n", o.LAN, directAffinity, scope)
 	fmt.Fprintf(&s, " chain policy_guards {\n  meta mark & 0x80000000 == 0 ip daddr @profile_pending4 ip saddr != @local4 counter drop\n  meta mark & 0x80000000 == 0 ip saddr @profile_pending4 ip daddr != @local4 counter drop\n  iifname \"%s\" meta nfproto ipv6 oifname \"%s\" counter drop\n }\n", o.LAN, o.WAN)
 	// Reject stale anchored flows even when the optional egress has been
 	// removed. Their conntrack mark can outlive the controller that set it.
@@ -358,6 +359,30 @@ func dnsRedirectRule(p *policy.Policy, o Options) (string, error) {
 	return fmt.Sprintf("%s meta nfproto ipv4 meta l4proto { tcp, udp } th dport 53 redirect to :%d", lanIngress(o), port), nil
 }
 
+const flushDNSHandoff = "flush chain inet flr dns_handoff\n"
+
+// DNSHandoffBatch stops LAN DNS before either listener is reconfigured. It
+// matches the original destination before redirect or direct flow affinity.
+func DNSHandoffBatch(brokerPort, localPort string) (string, error) {
+	ports := []string{"53"}
+	seen := map[int]bool{53: true}
+	for _, value := range []string{brokerPort, localPort} {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 {
+			return "", fmt.Errorf("invalid DNS port")
+		}
+		if !seen[port] {
+			ports = append(ports, strconv.Itoa(port))
+			seen[port] = true
+		}
+	}
+	match := ports[0]
+	if len(ports) > 1 {
+		match = "{ " + strings.Join(ports, ", ") + " }"
+	}
+	return flushDNSHandoff + "add rule inet flr dns_handoff meta l4proto { tcp, udp } th dport " + match + " counter drop\n", nil
+}
+
 // StaticSetsBatch updates static CIDRs, the fallback classifier, and the
 // mode's routing and forwarding chains without replacing the table.
 func StaticSetsBatch(p *policy.Policy) string {
@@ -385,7 +410,8 @@ func StaticSetsBatch(p *policy.Policy) string {
 }
 
 // RoutingPolicyBatch publishes DNS interception, active profiles, and the
-// routing mode together. Existing NAT associations remain in conntrack.
+// routing mode together, releasing any DNS handoff guard. Existing NAT
+// associations remain in conntrack.
 func RoutingPolicyBatch(p *policy.Policy, o Options) (string, error) {
 	if err := ValidateOptions(o); err != nil {
 		return "", err
@@ -399,7 +425,7 @@ func RoutingPolicyBatch(p *policy.Policy, o Options) (string, error) {
 	if rule != "" {
 		batch += "add rule inet flr dns " + rule + "\n"
 	}
-	return batch, nil
+	return batch + flushDNSHandoff, nil
 }
 
 func activeProfileOptions(o Options) (lan.LAN, map[string]contract.Class) {

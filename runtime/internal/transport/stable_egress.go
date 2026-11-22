@@ -2,7 +2,6 @@ package transport
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/connection"
@@ -14,7 +13,6 @@ func (m *Manager) SetStableEgress(enabled bool) {
 	defer m.mu.Unlock()
 	if m.stableEgress != enabled {
 		m.anchorEvidence = anchorEvidence{}
-		m.anchorRejected = nil
 	}
 	m.stableEgress = enabled
 }
@@ -50,7 +48,8 @@ func stableEgressCarrier(c *connection.Connection) bool {
 
 func (m *Manager) probeStableEgress(ctx context.Context, c *connection.Connection) <-chan anchorSample {
 	probe := m.stableEgressProbe
-	if probe == nil || !m.stableEgressAuto() || !stableEgressCarrier(c) || ctx.Err() != nil {
+	mode := m.state.Requested.Mode
+	if probe == nil || !m.stableEgress || (mode != "auto" && mode != "transport") || !stableEgressCarrier(c) || ctx.Err() != nil {
 		return nil
 	}
 	bounded, cancel := context.WithTimeout(ctx, m.ProbeTimeout)
@@ -89,7 +88,6 @@ func (m *Manager) anchorFailed(c *connection.Connection, sample anchorSample) bo
 		return false
 	}
 	if sample.reached {
-		delete(m.anchorRejected, sample.owner)
 		m.anchorEvidence = anchorEvidence{}
 		return false
 	}
@@ -97,22 +95,7 @@ func (m *Manager) anchorFailed(c *connection.Connection, sample anchorSample) bo
 		m.anchorEvidence = anchorEvidence{owner: sample.owner}
 	}
 	m.anchorEvidence.misses = min(m.anchorEvidence.misses+1, 2)
-	if m.anchorEvidence.misses == 2 && c.Family == "awg" {
-		if m.anchorRejected == nil {
-			m.anchorRejected = make(map[string]bool)
-		}
-		m.anchorRejected[sample.owner] = true
-	}
 	return m.anchorEvidence.misses == 2
-}
-
-func (m *Manager) stableFailbackCandidates(candidates []connection.Connection) []connection.Connection {
-	if !m.stableEgressAuto() || len(m.anchorRejected) == 0 {
-		return candidates
-	}
-	return slices.DeleteFunc(slices.Clone(candidates), func(c connection.Connection) bool {
-		return m.anchorRejected[connectionKey(c)]
-	})
 }
 
 func (m *Manager) qualifiedStableEgressCarrier(now time.Time, c *connection.Connection, state health.State) bool {

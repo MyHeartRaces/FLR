@@ -134,10 +134,11 @@ type Controller struct {
 	broker         *dnsbroker.Broker
 	// basePolicy is the installed policy; policy is its view for appliedMode
 	// (Settings.RoutingMode). A reload marks the view dirty until publication.
-	basePolicy         *policy.Policy
-	appliedMode        string
-	routingDirty       bool
-	applyRoutingPolicy func(*policy.Policy) error
+	basePolicy               *policy.Policy
+	appliedMode              string
+	routingDirty             bool
+	routingDNSHandoffPending bool // protected by adminMu
+	applyRoutingPolicy       func(*policy.Policy) error
 	// routing: custom rules and routing policy API state (policy_api.go).
 	routing routingState
 	// roscom is the last RoscomVPN import job (roscomvpn_api.go), guarded by
@@ -776,6 +777,7 @@ func (c *Controller) startVPN() error {
 	c.renderedLAN = b.LAN
 	c.policy, c.appliedMode, c.routingDirty = p, mode, false
 	c.mu.Unlock()
+	c.routingDNSHandoffPending = false
 	quiesce := c.quiesceSlot
 	if c.settings.Version == 2 {
 		quiesce = c.quiesceConnections
@@ -1052,7 +1054,7 @@ func (c *Controller) reconcileDirect(ctx context.Context) {
 // Callers hold adminMu.
 func (c *Controller) reconcileRoutingMode() {
 	mode := c.settings.EffectiveRoutingMode()
-	if c.basePolicy == nil || (mode == c.appliedMode && !c.routingDirty) {
+	if c.basePolicy == nil || (mode == c.appliedMode && !c.routingDirty && !c.routingDNSHandoffPending) {
 		return
 	}
 	view := c.basePolicy.ForMode(mode)

@@ -567,12 +567,14 @@ address-hint answers for protected names in Tunnel to require an IPv4 answer
 that it can bind to the VPN.
 
 The controller publishes the firewall policy and DNS interception in one
-nftables transaction. Crossing the Direct boundary also hands the DNS port
-between FLR and OpenWrt's dnsmasq, which can briefly interrupt DNS. On an
-activated router, Direct uses the saved native dnsmasq settings. An incomplete
-handoff stays pending for retry. Established traffic keeps its previous
-connection path while it remains available. OpenWrt's current WAN, LAN and
-IPv6 configuration determines which native paths Direct can use.
+nftables transaction. Crossing the Direct boundary pauses LAN DNS while FLR
+hands the port between its broker and OpenWrt's dnsmasq. On an activated
+router, Direct uses the saved native dnsmasq settings. The previous forwarding
+mode stays active until the handoff succeeds. If DNS rollback also fails,
+DNS stays blocked until the controller can finish a retry or restore the
+previous resolver. Established traffic keeps its previous connection path while
+it remains available. OpenWrt's current WAN, LAN and IPv6 configuration
+determines which native paths Direct can use.
 
 Older saved `full`, `full_domestic` and `proxy` values keep their existing
 semantics until the operator selects a current mode.
@@ -588,8 +590,10 @@ the stable egress bridge is configured and running. `active` indicates that
 protected IPv4 traffic uses the stable egress in the applied routing mode.
 `carrier` is `awg`, `gecko` (Hysteria2), or `down`. It reports the selected
 carrier socket, while deployment qualification measures end-to-end traffic
-through the anchor. Existing connection and health fields describe the
-underlying transport. [Configuration and acceptance](RELAY-RESILIENCE.md#session-preserving-failover-through-a-stable-egress)
+through the anchor. Stable egress keeps the active carrier when a preferred
+path recovers. The controller can change carriers after failure or when the
+operator makes a new explicit choice. Existing connection and health fields
+describe the underlying transport. [Configuration and acceptance](RELAY-RESILIENCE.md#session-preserving-failover-through-a-stable-egress)
 
 ### Routing policy API
 

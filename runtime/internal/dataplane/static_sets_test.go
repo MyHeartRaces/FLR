@@ -96,10 +96,37 @@ func TestRoutingModeUpdatesDNSInterception(t *testing.T) {
 			if !strings.Contains(initial.Nft, dnsChain+" }") {
 				t.Error("incorrect DNS chain in the initial ruleset")
 			}
+			expected += "flush chain inet flr dns_handoff\n"
 			if !strings.HasSuffix(transition, expected) {
 				t.Error("incorrect DNS change in the mode transaction")
 			}
 		})
+	}
+}
+
+func TestDNSHandoffGuardCoversLANAndAllResolverPorts(t *testing.T) {
+	o := Options{LAN: "lan0", WAN: "wan0", TestClient: "10.240.5.20", DNSPort: "1054", Selection: contract.Selection{General: contract.Down, Games: contract.Down}}
+	initial, err := Build(mustPolicy(t), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(initial.Nft, "iifname \"lan0\" jump dns_handoff\n  ct mark") {
+		t.Fatal("the handoff guard must cover all LAN traffic before direct affinity")
+	}
+	for _, tc := range []struct {
+		broker, local, ports string
+	}{
+		{"1054", "1053", "{ 53, 1054, 1053 }"},
+		{"53", "53", "53"},
+	} {
+		guard, err := DNSHandoffBatch(tc.broker, tc.local)
+		want := "flush chain inet flr dns_handoff\nadd rule inet flr dns_handoff meta l4proto { tcp, udp } th dport " + tc.ports + " counter drop\n"
+		if err != nil || guard != want {
+			t.Fatalf("handoff guard %q, %v, want %q", guard, err, want)
+		}
+	}
+	if _, err := DNSHandoffBatch("53 counter accept", "1053"); err == nil {
+		t.Fatal("invalid port accepted")
 	}
 }
 

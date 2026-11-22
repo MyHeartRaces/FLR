@@ -88,13 +88,15 @@ active carrier interface, can use a recently qualified alternate immediately.
 Two consecutive missed echo checks to the anchor's inner address also trigger
 carrier recovery, even when both Internet providers still respond. The check
 uses the existing authenticated tunnel. A cooldown prevents immediate failback
-to the failed carrier. Each AWG profile revision that lost the anchor stays
-out of normal failback while a healthy alternate is serving. A qualified
+to the failed carrier. Stable egress keeps its healthy carrier when a preferred
+path recovers because changing carriers also moves established flows. Failover
+resumes when the active carrier or its path to the anchor fails. A qualified
 Hysteria2 carrier can start forwarding anchored traffic while cleanup of a
 failed AWG mark is pending. Returning to AWG still requires successful cleanup.
 Cold candidates follow the normal ordered qualification.
-Explicit connection and transport choices keep their existing scope. When no
-compatible carrier is usable, protected flows pause and the kill switch holds.
+Transport-family choices retry candidates within the chosen family when they
+lose anchor reachability. An explicit connection choice stays pinned. When
+no compatible carrier is usable, protected flows pause and the kill switch holds.
 The time to resume depends on detection, alternate readiness, and the next
 inner packet or keepalive. Anchor loss, loss of its NAT state, an outage longer
 than the application timeout, and moving flows into stable egress initially can

@@ -74,7 +74,6 @@ type Manager struct {
 	stableEgress        bool
 	stableEgressProbe   func(context.Context, connection.Summary) (measured, reachable bool)
 	anchorEvidence      anchorEvidence
-	anchorRejected      map[string]bool
 	StepTimeout         time.Duration
 	AdmissionWait       time.Duration // bounds the wait for a cancelled standby admission (warm.go)
 	teardownWait        time.Duration

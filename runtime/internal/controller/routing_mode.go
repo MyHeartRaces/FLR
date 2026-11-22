@@ -32,49 +32,75 @@ func (c *Controller) stopRoutingDNS() {
 }
 
 type routingModeOps struct {
-	publish   func(*policy.Policy) error
+	publish   func(*policy.Policy, bool) error
+	guardDNS  func() error
 	nativeDNS func(bool) error
 	startDNS  func() error
 	stopDNS   func()
 }
 
-// apply hands off the router's DNS port when crossing the Direct boundary.
-// DNS interception and packet policy are always published together.
-func (r routingModeOps) apply(previous, next *policy.Policy) error {
-	if previous.Bypass() == next.Bypass() {
-		return r.publish(next)
+// apply keeps the previous forwarding policy in place until the target DNS
+// listener is ready. A guarded request must also run when the operator cancels
+// a failed handoff by choosing the previous mode again.
+func (r routingModeOps) apply(previous, next *policy.Policy, pending *bool) error {
+	if previous.Bypass() == next.Bypass() && !*pending {
+		return r.publish(next, false)
 	}
-	if next.Bypass() {
-		if err := r.publish(next); err != nil {
-			return err
+	recovering := *pending
+	*pending = true
+	if err := r.guardForwarding(previous, recovering); err != nil {
+		return err
+	}
+	if err := r.prepareDNS(next); err != nil {
+		return errors.Join(err, r.restoreDNS(previous, pending))
+	}
+	if err := r.publish(next, false); err != nil {
+		// nft may have committed before a command lost its acknowledgement.
+		// Fence DNS independently, then recover the previous forwarding mode
+		// without releasing the guard until its DNS listener is restored.
+		if fenceErr := r.guardForwarding(previous, true); fenceErr != nil {
+			return errors.Join(err, fenceErr)
 		}
-		r.stopDNS()
-		if err := r.nativeDNS(true); err != nil {
-			return errors.Join(err, r.restorePolicy(previous))
-		}
-		return nil
+		return errors.Join(err, r.restoreDNS(previous, pending))
 	}
-	if err := r.nativeDNS(false); err != nil {
-		return errors.Join(err, r.nativeDNS(true))
+	*pending = false
+	return nil
+}
+
+func (r routingModeOps) guardForwarding(previous *policy.Policy, restore bool) error {
+	if err := r.guardDNS(); err != nil {
+		return err
 	}
-	if err := r.startDNS(); err != nil {
-		return errors.Join(err, r.nativeDNS(true))
-	}
-	if err := r.publish(next); err != nil {
-		r.stopDNS()
-		return errors.Join(err, r.nativeDNS(true))
+	if restore {
+		return r.publish(previous, true)
 	}
 	return nil
 }
 
-func (r routingModeOps) restorePolicy(previous *policy.Policy) error {
-	if err := r.nativeDNS(false); err != nil {
+func (r routingModeOps) prepareDNS(view *policy.Policy) error {
+	// The broker may own port 53. Always stop it before preparing either
+	// listener, including when recovering from an interrupted handoff.
+	r.stopDNS()
+	if err := r.nativeDNS(view.Bypass()); err != nil {
 		return err
 	}
-	if err := r.publish(previous); err != nil {
+	if !view.Bypass() {
+		return r.startDNS()
+	}
+	return nil
+}
+
+func (r routingModeOps) restoreDNS(previous *policy.Policy, pending *bool) error {
+	if err := r.prepareDNS(previous); err != nil {
 		return err
 	}
-	return r.startDNS()
+	if err := r.publish(previous, false); err != nil {
+		// The preceding transaction may have completed despite its error.
+		// Re-fence until the controller can confirm a successful retry.
+		return errors.Join(err, r.guardDNS())
+	}
+	*pending = false
+	return nil
 }
 
 func (c *Controller) switchRoutingPolicy(next *policy.Policy) error {
@@ -86,10 +112,17 @@ func (c *Controller) switchRoutingPolicy(next *policy.Policy) error {
 	o := c.settings.Options
 	o.Net = c.router
 	o.DNSPort = c.settings.DNSPort
-	publish := func(view *policy.Policy) error {
+	guard, err := dataplane.DNSHandoffBatch(c.settings.DNSPort, c.settings.LocalDNSPort)
+	if err != nil {
+		return err
+	}
+	publish := func(view *policy.Policy, keepGuard bool) error {
 		batch, err := dataplane.RoutingPolicyBatch(view, o)
 		if err != nil {
 			return err
+		}
+		if keepGuard {
+			batch += guard
 		}
 		if view.Bypass() {
 			boot, err := dataplane.PrepareRoutingBootGuard(c.basePolicy, o)
@@ -103,6 +136,13 @@ func (c *Controller) switchRoutingPolicy(next *policy.Policy) error {
 		}
 		return c.broker.ApplyPolicy(view, batch)
 	}
-	ops := routingModeOps{publish: publish, nativeDNS: config.SetRoutingDNS, startDNS: c.startRoutingDNS, stopDNS: c.stopRoutingDNS}
-	return ops.apply(c.policy, next)
+	guardDNS := func() error { return dataplane.Nft(guard) }
+	ops := routingModeOps{publish: publish, guardDNS: guardDNS, nativeDNS: config.SetRoutingDNS, startDNS: c.startRoutingDNS, stopDNS: c.stopRoutingDNS}
+	err = ops.apply(c.policy, next, &c.routingDNSHandoffPending)
+	if c.routingDNSHandoffPending {
+		c.mu.Lock()
+		c.routingDirty = true
+		c.mu.Unlock()
+	}
+	return err
 }

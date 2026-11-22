@@ -66,28 +66,32 @@ func TestStableEgressFailsOverWhenOnlyTheAnchorStopsResponding(t *testing.T) {
 	}
 }
 
-func TestStableEgressRemembersMultipleAWGAnchorFailures(t *testing.T) {
+func TestStableEgressKeepsHealthyCarrierWhenPreferredPathRecovers(t *testing.T) {
 	main := managedConnection(t, "awg", "a", 10)
 	spare := managedConnection(t, "awg", "b", 11)
 	reserve := managedConnection(t, "hy2", "h", 20)
 	f := newWarmFixture(t, main, spare, reserve)
-	f.awg.good[spare.ID] = true
 	f.m.SetStableEgress(true)
 	f.admit()
 	f.m.SetStableEgressProbe(func(_ context.Context, owner connection.Summary) (bool, bool) {
 		return true, owner.ID == reserve.ID
 	})
 
-	// Both AWG profiles pass their public probes. Each needs two failed
-	// anchor checks before returning traffic to the healthy reserve.
-	for _, want := range []string{main.ID, reserve.ID, spare.ID, spare.ID, reserve.ID} {
-		s, _ := f.round(5 * time.Second)
-		if s.ActiveConnection == nil || s.ActiveConnection.ID != want {
-			t.Fatalf("at %v, expected active connection %s: %+v", f.now, want, s.ActiveConnection)
-		}
+	f.awg.good[main.ID] = false
+	if s, _ := f.round(5 * time.Second); s.ActiveConnection == nil || s.ActiveConnection.ID != reserve.ID {
+		t.Fatalf("fixture did not fail over to the reserve: %+v", s.ActiveConnection)
 	}
-	if s, _ := f.round(time.Minute); s.ActiveConnection == nil || s.ActiveConnection.ID != reserve.ID {
-		t.Fatalf("the second anchor failure cleared the first after cooldown: %+v", s.ActiveConnection)
+	// Neither readvance to another native profile nor return to a recovered
+	// native path may replace a working anchored carrier on public probes.
+	f.awg.good[spare.ID] = true
+	if s, _ := f.round(5 * time.Second); s.ActiveConnection == nil || s.ActiveConnection.ID != reserve.ID {
+		t.Fatalf("re-advance replaced the working reserve: %+v", s.ActiveConnection)
+	}
+	f.awg.good[main.ID] = true
+	for i := 0; i < 20; i++ {
+		if s, _ := f.round(5 * time.Second); s.ActiveConnection == nil || s.ActiveConnection.ID != reserve.ID {
+			t.Fatalf("public health alone replaced the working reserve: %+v", s.ActiveConnection)
+		}
 	}
 }
 
@@ -107,15 +111,20 @@ func TestCollectAnchorSampleKeepsCompletedResultAtDeadline(t *testing.T) {
 func TestStableEgressRetiresUnreachableProxyBeforeColdReplacement(t *testing.T) {
 	first := managedConnection(t, "hy2", "first", 20)
 	second := managedConnection(t, "hy2", "second", 21)
-	f := newWarmFixture(t, first, second)
-	f.m.SetStableEgress(true)
-	f.m.SetStableEgressProbe(func(_ context.Context, owner connection.Summary) (bool, bool) {
-		return true, owner.ID != first.ID
-	})
-	f.round(0)
-	f.round(5 * time.Second)
-	s, _ := f.round(5 * time.Second)
-	if s.ActiveConnection == nil || s.ActiveConnection.ID != second.ID || len(f.cleaned) != 1 || f.cleaned[0] != contract.Gecko {
-		t.Fatalf("failed owner was not retired before replacement: active=%+v cleanup=%v", s.ActiveConnection, f.cleaned)
+	for _, selection := range []connection.Selection{{Mode: "auto"}, {Mode: "transport", Family: "hy2"}} {
+		t.Run(selection.Mode, func(t *testing.T) {
+			f := newWarmFixture(t, first, second)
+			f.sel = selection
+			f.m.SetStableEgress(true)
+			f.m.SetStableEgressProbe(func(_ context.Context, owner connection.Summary) (bool, bool) {
+				return true, owner.ID != first.ID
+			})
+			f.round(0)
+			f.round(5 * time.Second)
+			s, _ := f.round(5 * time.Second)
+			if s.ActiveConnection == nil || s.ActiveConnection.ID != second.ID || len(f.cleaned) != 1 || f.cleaned[0] != contract.Gecko {
+				t.Fatalf("failed owner was not retired before replacement: active=%+v cleanup=%v", s.ActiveConnection, f.cleaned)
+			}
+		})
 	}
 }

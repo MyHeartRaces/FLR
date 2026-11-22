@@ -320,17 +320,11 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 			delete(s.warmRetries, key)
 		}
 	}
-	for key := range m.anchorRejected {
-		if !stored[key] {
-			delete(m.anchorRejected, key)
-		}
-	}
 	changed := m.state.Generation != generation || m.state.Requested != selection
 	if changed {
 		s.cursor = ""
 		s.nativeCleanupRetry = ""
 		m.anchorEvidence = anchorEvidence{}
-		m.anchorRejected = nil
 		// A new explicit choice is allowed to retire the previous resources. Merely
 		// changing priority metadata keeps the same intent generation and affinity.
 		if (s.active != nil || s.slot != nil || s.admission != nil || s.quarantine) && !m.clearConnection() {
@@ -435,10 +429,15 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 			return m.state
 		}
 		if state.Healthy() && !anchorFailed {
-			nativeRecovered := nativeSample.valid && nativeSample.result.NotMeasured == "" && m.state.AWG.Healthy()
-			if m.stableEgressAuto() {
-				nativeRecovered = nativeRecovered && s.native != nil && !m.anchorRejected[connectionKey(*s.native)] && nativeSample.result.TCP && nativeSample.result.UDP
+			if m.stableEgress {
+				// Ordinary failback moves only new flows. Stable egress moves all
+				// protected flows, and the shared anchor can only be checked over
+				// the selected carrier. Keep this carrier until failure or a new
+				// explicit choice rather than testing an alternate with live flows.
+				m.selectConnection(available[key], state, generation, nil)
+				return m.state
 			}
+			nativeRecovered := nativeSample.valid && nativeSample.result.NotMeasured == "" && m.state.AWG.Healthy()
 			if c.Family != "awg" && s.native != nil && nativeRecovered && rank[connectionKey(*s.native)] < rank[key] && !now.Before(m.retries[connectionKey(*s.native)].after) {
 				// Atomic map publication in the controller is the only default transition.
 				// Slot ownership, process, TUN, routes and existing conntrack stay intact.
@@ -447,8 +446,7 @@ func (m *Manager) StepConnections(ctx context.Context, now time.Time, registry *
 				m.selectConnection(available[key], state, generation, nil)
 				if c.Family != "awg" {
 					// Re-advance: retry the AWG candidates ranked above the proxy.
-					preferred := m.stableFailbackCandidates(candidates[:rank[key]])
-					m.readvanceAWG(ctx, now, preferred, len(preferred), nativeSample, generation)
+					m.readvanceAWG(ctx, now, candidates, rank[key], nativeSample, generation)
 				}
 			}
 			return m.state
