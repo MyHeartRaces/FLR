@@ -110,12 +110,17 @@ func TestContinuityUsesQualifiedReserveBeforeFailedNativeCleanup(t *testing.T) {
 	bridge := &testContinuityBridge{}
 	c.continuity = continuityState{bridge: bridge, path: continuity.Path{Channel: contract.Down}}
 	before := transport.Snapshot{
+		Generation:       c.choiceEpoch,
 		Selection:        contract.Selection{General: contract.AWG, Games: contract.AWG},
 		AWG:              health.State{Up: true},
 		ActiveConnection: &connection.Summary{ID: "a", Revision: "first", Family: "awg", Capabilities: profile.Capabilities{UDP: true}},
 	}
 	c.publishTransport(transport.Snapshot{}, before)
+	if bridge.selected.Channel != contract.AWG {
+		t.Fatal("fixture failed to publish the initial native carrier")
+	}
 	reserve := transport.Snapshot{
+		Generation:       c.choiceEpoch,
 		Selection:        contract.Selection{General: contract.Gecko, Games: contract.Gecko},
 		AWG:              health.State{Failures: 3},
 		Slot:             health.State{Up: true},
@@ -128,8 +133,9 @@ func TestContinuityUsesQualifiedReserveBeforeFailedNativeCleanup(t *testing.T) {
 		return errors.New("cleanup failed")
 	}
 	c.publishTransport(before, reserve)
-	if !c.awgCleanupPending || c.Status().Proxy.Pending || c.Status().Selection != reserve.Selection {
-		t.Fatal("cleanup failure left the independent reserve unavailable")
+	status := c.Status()
+	if !c.awgCleanupPending || status.Proxy.Pending || status.Selection != reserve.Selection {
+		t.Fatalf("cleanup failure left the independent reserve unavailable: selection=%+v, pending=%t, cleanup pending=%t", status.Selection, status.Proxy.Pending, c.awgCleanupPending)
 	}
 	c.publishTransport(reserve, before)
 	if bridge.selected.Channel != contract.Gecko || !c.Status().Proxy.Pending {
