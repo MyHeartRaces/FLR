@@ -3,11 +3,14 @@ package config
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/native"
 	"github.com/MyHeartRaces/FLR/runtime/internal/privatefile"
@@ -27,24 +30,47 @@ type dnsmasqRoutingSettings struct {
 	options map[string]dnsmasqOption
 }
 
+type routingDNSAction int
+
+const (
+	routingDNSPreflight routingDNSAction = iota
+	routingDNSStartup
+	routingDNSHandoff
+)
+
 // SetRoutingDNS switches the first dnsmasq instance between the native settings
 // backed up at activation and the local-only resolver used by the policy broker.
 // Callers must release the broker's port 53 before switching to native DNS.
-func SetRoutingDNS(direct bool) error {
-	return setRoutingDNS(direct, "/etc/config/dhcp", "/etc/flr-runtime/backup/dhcp", "/etc/flr-runtime/dnsmasq-restart.pending", native.Output)
+func SetRoutingDNS(ctx context.Context, direct bool, router netip.Addr) error {
+	return configureRoutingDNS(ctx, direct, router, routingDNSHandoff)
+}
+
+// InitRoutingDNS preserves the protected startup fast path when dnsmasq's
+// configuration is current and no restart is pending.
+func InitRoutingDNS(ctx context.Context, direct bool, router netip.Addr) error {
+	return configureRoutingDNS(ctx, direct, router, routingDNSStartup)
+}
+
+func configureRoutingDNS(ctx context.Context, direct bool, router netip.Addr, action routingDNSAction) error {
+	addr := netip.MustParseAddrPort("127.0.0.1:" + policyDNSMasqPort)
+	if direct {
+		if !router.Is4() {
+			return fmt.Errorf("cannot check native DNS before the router LAN is available")
+		}
+		addr = netip.AddrPortFrom(router, 53)
+	}
+	return routingDNS(direct, action, "/etc/config/dhcp", "/etc/flr-runtime/backup/dhcp", "/etc/flr-runtime/dnsmasq-restart.pending", native.Output, func() error {
+		return waitRoutingDNS(ctx, addr)
+	})
 }
 
 // CheckNativeRoutingDNS validates the handoff while the current resolver can
 // still serve. SetRoutingDNS repeats the checks before committing.
 func CheckNativeRoutingDNS() error {
-	return routingDNS(true, true, "/etc/config/dhcp", "/etc/flr-runtime/backup/dhcp", "/etc/flr-runtime/dnsmasq-restart.pending", native.Output)
+	return routingDNS(true, routingDNSPreflight, "/etc/config/dhcp", "/etc/flr-runtime/backup/dhcp", "/etc/flr-runtime/dnsmasq-restart.pending", native.Output, nil)
 }
 
-func setRoutingDNS(direct bool, dhcp, backup, pending string, command func(string, ...string) ([]byte, error)) error {
-	return routingDNS(direct, false, dhcp, backup, pending, command)
-}
-
-func routingDNS(direct, checkOnly bool, dhcp, backup, pending string, command func(string, ...string) ([]byte, error)) error {
+func routingDNS(direct bool, action routingDNSAction, dhcp, backup, pending string, command func(string, ...string) ([]byte, error), ready func() error) error {
 	// The uci CLI retains its default delta search path even with a custom
 	// savedir. Unique package aliases keep dhcp's staged changes out of the
 	// commit. UCI resolves the alias symlink when committing to its target.
@@ -117,12 +143,15 @@ func routingDNS(direct, checkOnly bool, dhcp, backup, pending string, command fu
 	}
 	changed := !reflect.DeepEqual(live, want)
 	if !changed && os.IsNotExist(markErr) {
+		if action == routingDNSHandoff || (action == routingDNSStartup && direct) {
+			return ready()
+		}
 		return nil
 	}
 	if err = checkStaged(); err != nil {
 		return err
 	}
-	if checkOnly {
+	if action == routingDNSPreflight {
 		return nil
 	}
 	if changed {
@@ -173,7 +202,36 @@ func routingDNS(direct, checkOnly bool, dhcp, backup, pending string, command fu
 	if _, err = command("/etc/init.d/dnsmasq", "restart"); err != nil {
 		return fmt.Errorf("cannot restart dnsmasq: %w", err)
 	}
+	if err = ready(); err != nil {
+		return err
+	}
 	return os.Remove(pending)
+}
+
+// OpenWrt's restart command registers the service with procd. Wait for actual
+// local DNS replies before allowing the controller to release the handoff guard.
+func waitRoutingDNS(ctx context.Context, addr netip.AddrPort) error {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(150 * time.Millisecond)
+	defer ticker.Stop()
+	port := fmt.Sprint(addr.Port())
+	answers := func(transport string) bool {
+		result := native.Execute(ctx, 500*time.Millisecond, "", "dig", "-r", "-4", "@"+addr.Addr().String(), "-p", port,
+			"localhost.", "A", "+norecurse", "+tries=1", "+time=1", "+ignore", "+noall", "+comments", transport)
+		return result.Err == nil && (bytes.Contains(result.Stdout, []byte("status: NOERROR,")) ||
+			bytes.Contains(result.Stdout, []byte("status: NXDOMAIN,")))
+	}
+	for ctx.Err() == nil {
+		if answers("+notcp") && answers("+tcp") && ctx.Err() == nil {
+			return nil
+		}
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+		}
+	}
+	return fmt.Errorf("dnsmasq did not answer local UDP and TCP DNS on port %s: %w", port, ctx.Err())
 }
 
 func parseDNSMasqRouting(data []byte, pkg string) (dnsmasqRoutingSettings, error) {

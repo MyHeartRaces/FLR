@@ -761,7 +761,7 @@ func (c *Controller) startVPN() error {
 		broker.Router = c.router.Addr
 	}
 	c.broker = broker
-	if e = config.SetRoutingDNS(p.Bypass()); e != nil {
+	if e = config.InitRoutingDNS(c.ctx, p.Bypass(), c.router.Addr); e != nil {
 		return e
 	}
 	if !p.Bypass() {

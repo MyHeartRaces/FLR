@@ -105,6 +105,9 @@ func (r routingModeOps) restoreDNS(previous *policy.Policy, pending *bool) error
 
 func (c *Controller) switchRoutingPolicy(next *policy.Policy) error {
 	if next.Bypass() && !c.policy.Bypass() {
+		if c.router.IsZero() {
+			return errors.New("cannot switch to native DNS before the router LAN is available")
+		}
 		if err := config.CheckNativeRoutingDNS(); err != nil {
 			return err
 		}
@@ -137,7 +140,8 @@ func (c *Controller) switchRoutingPolicy(next *policy.Policy) error {
 		return c.broker.ApplyPolicy(view, batch)
 	}
 	guardDNS := func() error { return dataplane.Nft(guard) }
-	ops := routingModeOps{publish: publish, guardDNS: guardDNS, nativeDNS: config.SetRoutingDNS, startDNS: c.startRoutingDNS, stopDNS: c.stopRoutingDNS}
+	nativeDNS := func(direct bool) error { return config.SetRoutingDNS(c.ctx, direct, c.router.Addr) }
+	ops := routingModeOps{publish: publish, guardDNS: guardDNS, nativeDNS: nativeDNS, startDNS: c.startRoutingDNS, stopDNS: c.stopRoutingDNS}
 	err = ops.apply(c.policy, next, &c.routingDNSHandoffPending)
 	if c.routingDNSHandoffPending {
 		c.mu.Lock()

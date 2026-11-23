@@ -1,13 +1,16 @@
 package config
 
 import (
+	"context"
 	"errors"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/MyHeartRaces/FLR/runtime/internal/native"
 )
@@ -85,23 +88,89 @@ func TestRoutingDNSRetriesRestartAfterCommit(t *testing.T) {
 	}
 }
 
+func TestRoutingDNSKeepsRestartPendingUntilResolverAnswers(t *testing.T) {
+	d := newRoutingDNSTest(t, testPolicyDNS, testNativeDNS)
+	d.afterCommit = testNativeDNS
+	d.readinessError = errors.New("DNS listener unavailable")
+	if err := d.set(true); !errors.Is(err, d.readinessError) {
+		t.Fatalf("acknowledged restart without a DNS listener: %v", err)
+	}
+	if _, err := os.Stat(d.pending); err != nil {
+		t.Fatalf("lost pending restart before DNS was ready: %v", err)
+	}
+	d.readinessError = nil
+	if err := d.set(true); err != nil || d.commits != 1 || d.restarts != 2 {
+		t.Fatalf("could not finish DNS restart: %v, commits %d, restarts %d", err, d.commits, d.restarts)
+	}
+	if _, err := os.Stat(d.pending); !os.IsNotExist(err) {
+		t.Fatalf("DNS restart still pending after readiness: %v", err)
+	}
+	d.readinessError = errors.New("native DNS went away")
+	if err := d.set(true); !errors.Is(err, d.readinessError) || d.restarts != 2 {
+		t.Fatalf("accepted native settings without readiness or restarted unnecessarily: %v, restarts %d", err, d.restarts)
+	}
+}
+
+func TestWaitRoutingDNSRequiresUDPAndTCPReplies(t *testing.T) {
+	dir := t.TempDir()
+	dig := `#!/bin/sh
+[ "$1 $2 $3 $4 $5 $6 $7" = "-r -4 @192.0.2.1 -p 53 localhost. A" ] || exit 1
+for transport do :; done
+case "$transport" in
+  +notcp) status=$TEST_UDP_STATUS ;;
+  +tcp) status=$TEST_TCP_STATUS ;;
+  *) exit 1 ;;
+esac
+printf ';; ->>HEADER<<- opcode: QUERY, status: %s, id: 1\n' "$status"
+`
+	if err := os.WriteFile(filepath.Join(dir, "dig"), []byte(dig), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	addr := netip.MustParseAddrPort("192.0.2.1:53")
+	for _, replies := range []struct{ udp, tcp string }{{"NOERROR", "REFUSED"}, {"SERVFAIL", "NOERROR"}} {
+		t.Setenv("TEST_UDP_STATUS", replies.udp)
+		t.Setenv("TEST_TCP_STATUS", replies.tcp)
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		err := waitRoutingDNS(ctx, addr)
+		cancel()
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("accepted DNS replies %+v: %v", replies, err)
+		}
+	}
+	t.Setenv("TEST_UDP_STATUS", "NOERROR")
+	t.Setenv("TEST_TCP_STATUS", "NXDOMAIN")
+	if err := waitRoutingDNS(context.Background(), addr); err != nil {
+		t.Fatalf("rejected local UDP and TCP DNS replies: %v", err)
+	}
+}
+
 func TestRoutingDNSColdStartAcceptsExistingPolicyWithoutBackup(t *testing.T) {
 	d := newRoutingDNSTest(t, testPolicyDNS, "")
-	if err := d.set(false); err != nil || d.commits != 0 || d.restarts != 0 {
+	d.readinessError = errors.New("protected startup should defer DNS readiness")
+	if err := routingDNS(false, routingDNSStartup, d.live, d.backup, d.pending, d.command, d.ready); err != nil || d.commits != 0 || d.restarts != 0 {
 		t.Fatalf("protected cold start: %v, commits %d, restarts %d", err, d.commits, d.restarts)
+	}
+}
+
+func TestRoutingDNSGuardedHandoffRechecksExistingPolicyResolver(t *testing.T) {
+	d := newRoutingDNSTest(t, testPolicyDNS, "")
+	d.readinessError = errors.New("local DNS listener unavailable")
+	if err := d.set(false); !errors.Is(err, d.readinessError) || d.commits != 0 || d.restarts != 0 {
+		t.Fatalf("guarded handoff accepted an unavailable resolver or rewrote its settings: %v", err)
 	}
 }
 
 func TestNativeDNSPreflightDoesNotChangeTheResolver(t *testing.T) {
 	d := newRoutingDNSTest(t, testPolicyDNS, testNativeDNS)
-	if err := routingDNS(true, true, d.live, d.backup, d.pending, d.command); err != nil {
+	if err := routingDNS(true, routingDNSPreflight, d.live, d.backup, d.pending, d.command, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(d.mutations) != 0 || d.commits != 0 || d.restarts != 0 {
 		t.Fatal("native DNS preflight changed router configuration")
 	}
 	d.staged = "dhcp.lan.ignore=1"
-	if err := routingDNS(true, true, d.live, d.backup, d.pending, d.command); err == nil {
+	if err := routingDNS(true, routingDNSPreflight, d.live, d.backup, d.pending, d.command, nil); err == nil {
 		t.Fatal("preflight accepted staged DHCP changes")
 	}
 }
@@ -125,7 +194,7 @@ func TestRoutingDNSNativeUCI(t *testing.T) {
 		}
 		return native.Output(name, args...)
 	}
-	if err := setRoutingDNS(true, d.live, d.backup, d.pending, command); err != nil {
+	if err := routingDNS(true, routingDNSHandoff, d.live, d.backup, d.pending, command, d.ready); err != nil {
 		t.Fatal(err)
 	}
 	current := func() string {
@@ -142,7 +211,7 @@ func TestRoutingDNSNativeUCI(t *testing.T) {
 			t.Fatalf("lost fixture value %q", value)
 		}
 	}
-	if err := setRoutingDNS(false, d.live, d.backup, d.pending, command); err != nil {
+	if err := routingDNS(false, routingDNSHandoff, d.live, d.backup, d.pending, command, d.ready); err != nil {
 		t.Fatal(err)
 	}
 	if got := current(); !strings.Contains(got, "option port '1053'") || strings.Contains(got, "list server") || d.restarts != 2 {
@@ -156,6 +225,7 @@ type routingDNSTest struct {
 	staged                      string
 	changedWhileStaging         string
 	restartError                error
+	readinessError              error
 	mutations                   []string
 	commits, restarts           int
 }
@@ -179,8 +249,10 @@ func newRoutingDNSTest(t *testing.T, current, saved string) *routingDNSTest {
 }
 
 func (d *routingDNSTest) set(direct bool) error {
-	return setRoutingDNS(direct, d.live, d.backup, d.pending, d.command)
+	return routingDNS(direct, routingDNSHandoff, d.live, d.backup, d.pending, d.command, d.ready)
 }
+
+func (d *routingDNSTest) ready() error { return d.readinessError }
 
 func (d *routingDNSTest) command(name string, args ...string) ([]byte, error) {
 	if name == "/etc/init.d/dnsmasq" && reflect.DeepEqual(args, []string{"restart"}) {
